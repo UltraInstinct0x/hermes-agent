@@ -11,9 +11,19 @@ external_ref so re-firing the same trigger is idempotent.
 
 from __future__ import annotations
 
+import difflib
 import hashlib
+import logging
+import os
 
 from .panel_emitter import emit
+
+logger = logging.getLogger(__name__)
+
+
+def _enabled() -> bool:
+    """Top-level gate. Avoids any work (incl. diff computation) when off."""
+    return os.environ.get("PANEL_EMIT_ENABLED") == "1"
 
 PASSAGE_CAP = 8000
 DIFF_CAP = 8000
@@ -71,6 +81,96 @@ def emit_process_output(
         ],
     }
     return emit([unit], profile=profile)
+
+
+# ---------------------------------------------------------------------------
+# on_* hook wrappers — these are the call sites used by host integration
+# points (skill_manage, conversation_loop, prompt steering). Each one:
+#   1. Early-returns when PANEL_EMIT_ENABLED != "1" (no work, no imports).
+#   2. Wraps every call in try/except so emitter never breaks the host.
+#   3. Logs failures at WARN level only.
+# ---------------------------------------------------------------------------
+
+
+def on_skill_diff(
+    skill_name: str,
+    before_text: str,
+    after_text: str,
+    agent_profile: str | None = None,
+    session_id: str | None = None,
+    action: str = "edit",
+) -> None:
+    """Hook: a skill was patched/edited. Computes a unified diff and emits."""
+    if not _enabled():
+        return
+    try:
+        before = before_text or ""
+        after = after_text or ""
+        if before == after:
+            return
+        diff = "".join(
+            difflib.unified_diff(
+                before.splitlines(keepends=True),
+                after.splitlines(keepends=True),
+                fromfile=f"a/{skill_name}",
+                tofile=f"b/{skill_name}",
+                n=3,
+            )
+        )
+        if not diff:
+            return
+        reason_parts = [f"skill_manage:{action}", f"skill={skill_name}"]
+        if session_id:
+            reason_parts.append(f"session={session_id}")
+        reason = " ".join(reason_parts)
+        emit_skill_diff(skill_name, diff, reason, profile=agent_profile)
+    except Exception as exc:  # noqa: BLE001 — never break the host
+        logger.warning("panel on_skill_diff failed: %s", exc)
+
+
+def on_process_output(
+    passage: str,
+    user_goal: str = "",
+    agent_profile: str | None = None,
+    session_id: str | None = None,
+    min_chars: int = 500,
+) -> None:
+    """Hook: agent emitted a meaningful final output. Skips short outputs."""
+    if not _enabled():
+        return
+    try:
+        text = passage or ""
+        if len(text) < min_chars:
+            return
+        goal = user_goal or ""
+        if session_id and goal:
+            goal = f"session={session_id} :: {goal}"
+        elif session_id:
+            goal = f"session={session_id}"
+        emit_process_output(text, goal, profile=agent_profile)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("panel on_process_output failed: %s", exc)
+
+
+def on_prompt_rewrite(
+    original: str,
+    corrected: str,
+    context: str = "",
+    agent_profile: str | None = None,
+    session_id: str | None = None,
+) -> None:
+    """Hook: a prompt was rewritten/steered. No clean call site wired yet."""
+    if not _enabled():
+        return
+    try:
+        if not original or not corrected or original == corrected:
+            return
+        ctx = context or ""
+        if session_id:
+            ctx = f"session={session_id} :: {ctx}" if ctx else f"session={session_id}"
+        emit_prompt_rewrite(original, corrected, ctx, profile=agent_profile)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("panel on_prompt_rewrite failed: %s", exc)
 
 
 def emit_prompt_rewrite(

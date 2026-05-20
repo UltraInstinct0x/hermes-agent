@@ -4079,6 +4079,36 @@ def run_conversation(
     # Plugin hook: on_session_end
     # Fired at the very end of every run_conversation call.
     # Plugins can use this for cleanup, flushing buffers, etc.
+
+    # Panel emitter: emit a process_output_rating unit when the agent produced
+    # a final response of meaningful length (>500 chars). Placed at the very
+    # end of run_conversation so the response is fully assembled. Best-effort,
+    # gated by PANEL_EMIT_ENABLED, never raises.
+    try:
+        if (
+            final_response
+            and not interrupted
+            and isinstance(final_response, str)
+            and len(final_response) >= 500
+        ):
+            from agent.panel_triggers import on_process_output
+            _user_goal = ""
+            try:
+                if isinstance(original_user_message, str):
+                    _user_goal = original_user_message[:2000]
+            except Exception:
+                _user_goal = ""
+            on_process_output(
+                passage=final_response,
+                user_goal=_user_goal,
+                agent_profile=os.environ.get("PANEL_PROFILE", "hermes:base"),
+                session_id=getattr(agent, "session_id", None),
+            )
+    except Exception as _panel_exc:
+        try:
+            logger.warning("panel on_process_output emit failed: %s", _panel_exc)
+        except Exception:
+            pass
     try:
         from hermes_cli.plugins import invoke_hook as _invoke_hook
         _invoke_hook(

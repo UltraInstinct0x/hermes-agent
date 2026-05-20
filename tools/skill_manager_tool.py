@@ -727,6 +727,25 @@ def skill_manage(
 
     Returns JSON string with results.
     """
+    # Capture before-state for panel skill_diff emission (best-effort, gated).
+    _panel_before_text: Optional[str] = None
+    _panel_target_path: Optional[Path] = None
+    if action in {"edit", "patch", "write_file", "remove_file"}:
+        try:
+            _existing = _find_skill(name)
+            if _existing:
+                _skill_dir = _existing["path"]
+                if action in {"edit", "patch"} and not file_path:
+                    _panel_target_path = _skill_dir / "SKILL.md"
+                elif file_path:
+                    _candidate, _ = _resolve_skill_target(_skill_dir, file_path)
+                    _panel_target_path = _candidate
+                if _panel_target_path is not None and _panel_target_path.exists():
+                    _panel_before_text = _panel_target_path.read_text(encoding="utf-8")
+        except Exception:
+            _panel_before_text = None
+            _panel_target_path = None
+
     if action == "create":
         if not content:
             return tool_error("content is required for 'create'. Provide the full SKILL.md text (frontmatter + body).", success=False)
@@ -784,6 +803,37 @@ def skill_manage(
                 bump_patch(name)
             elif action == "delete":
                 forget(name)
+        except Exception:
+            pass
+
+        # Panel emitter: emit skill_diff_review unit so the rater can judge
+        # whether this update is an improvement. Best-effort; gated by env.
+        try:
+            if action in {"create", "edit", "patch", "write_file", "remove_file"}:
+                from agent.panel_triggers import on_skill_diff
+                _after_text = ""
+                try:
+                    if action == "create":
+                        _existing = _find_skill(name)
+                        if _existing:
+                            _md = _existing["path"] / "SKILL.md"
+                            if _md.exists():
+                                _after_text = _md.read_text(encoding="utf-8")
+                    elif _panel_target_path is not None:
+                        if action == "remove_file":
+                            _after_text = ""
+                        elif _panel_target_path.exists():
+                            _after_text = _panel_target_path.read_text(encoding="utf-8")
+                except Exception:
+                    _after_text = ""
+                on_skill_diff(
+                    skill_name=name,
+                    before_text=_panel_before_text or "",
+                    after_text=_after_text,
+                    agent_profile=os.environ.get("PANEL_PROFILE", "hermes:base"),
+                    session_id=os.environ.get("HERMES_SESSION_ID"),
+                    action=action,
+                )
         except Exception:
             pass
 

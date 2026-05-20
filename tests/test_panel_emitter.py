@@ -203,3 +203,192 @@ def test_external_ref_is_deterministic(monkeypatch):
     panel_triggers.emit_skill_diff("s", "different reason", "r")  # same ref args
     # ref derives from skill_name|reason, not diff body
     assert ref1 == ref2
+
+
+# ---------- on_* gating + safety ---------------------------------------------
+
+
+def test_on_skill_diff_gated_off_no_emit(monkeypatch):
+    monkeypatch.delenv("PANEL_EMIT_ENABLED", raising=False)
+    called = {"n": 0}
+
+    def fake_emit(units, profile=None):
+        called["n"] += 1
+        return {"ok": True}
+
+    monkeypatch.setattr(panel_triggers, "emit", fake_emit)
+    panel_triggers.on_skill_diff("s", "before", "after")
+    assert called["n"] == 0
+
+
+def test_on_skill_diff_emits_unified_diff(monkeypatch):
+    monkeypatch.setenv("PANEL_EMIT_ENABLED", "1")
+    bag = _capture_emit(monkeypatch)
+    panel_triggers.on_skill_diff(
+        "my-skill", "old line\n", "new line\n",
+        agent_profile="hermes:base", session_id="sess123", action="patch",
+    )
+    u = bag["units"][0]
+    assert u["type"] == "skill_diff_review"
+    assert "old line" in u["diff"] and "new line" in u["diff"]
+    assert "skill_manage:patch" in u["prompt_context"]
+    assert "skill=my-skill" in u["prompt_context"]
+    assert "sess123" in u["prompt_context"]
+
+
+def test_on_skill_diff_no_change_skips(monkeypatch):
+    monkeypatch.setenv("PANEL_EMIT_ENABLED", "1")
+    bag = _capture_emit(monkeypatch)
+    panel_triggers.on_skill_diff("s", "same", "same")
+    assert "units" not in bag
+
+
+def test_on_skill_diff_swallows_emit_exception(monkeypatch, caplog):
+    monkeypatch.setenv("PANEL_EMIT_ENABLED", "1")
+
+    def boom(units, profile=None):
+        raise RuntimeError("emit broke")
+
+    monkeypatch.setattr(panel_triggers, "emit", boom)
+    # must not raise — host tools must not break
+    panel_triggers.on_skill_diff("s", "a", "b")
+
+
+def test_on_process_output_skips_short(monkeypatch):
+    monkeypatch.setenv("PANEL_EMIT_ENABLED", "1")
+    bag = _capture_emit(monkeypatch)
+    panel_triggers.on_process_output("short", "goal")
+    assert "units" not in bag
+
+
+def test_on_process_output_emits_when_long(monkeypatch):
+    monkeypatch.setenv("PANEL_EMIT_ENABLED", "1")
+    bag = _capture_emit(monkeypatch)
+    panel_triggers.on_process_output(
+        "x" * 600, "do the thing",
+        agent_profile="hermes:base", session_id="abc",
+    )
+    u = bag["units"][0]
+    assert u["type"] == "process_output_rating"
+    assert "session=abc" in u["prompt_context"]
+    assert "do the thing" in u["prompt_context"]
+
+
+def test_on_prompt_rewrite_gated(monkeypatch):
+    monkeypatch.delenv("PANEL_EMIT_ENABLED", raising=False)
+    bag = _capture_emit(monkeypatch)
+    panel_triggers.on_prompt_rewrite("a", "b", "ctx")
+    assert "units" not in bag
+
+
+def test_on_prompt_rewrite_emits(monkeypatch):
+    monkeypatch.setenv("PANEL_EMIT_ENABLED", "1")
+    bag = _capture_emit(monkeypatch)
+    panel_triggers.on_prompt_rewrite(
+        "make a list", "make a numbered list",
+        context="user_correction", session_id="s9",
+    )
+    u = bag["units"][0]
+    assert u["type"] == "prompt_rewrite_pair"
+    assert u["choices"][0]["text"] == "make a list"
+    assert u["choices"][1]["text"] == "make a numbered list"
+
+
+# ---------- integration: skill_manage actually triggers on_skill_diff -------
+
+
+def test_skill_manage_patch_triggers_on_skill_diff(monkeypatch, tmp_path):
+    """End-to-end: skill_manage(action='patch', ...) calls on_skill_diff."""
+    from unittest.mock import patch as _patch
+    from tools import skill_manager_tool
+
+    skills_root = tmp_path / "skills"
+    skills_root.mkdir()
+    skill_dir = skills_root / "panel-test"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: panel-test\ndescription: A skill for panel emitter integration testing.\n---\n\n# Body\n\nold step\n",
+        encoding="utf-8",
+    )
+
+    captured = {}
+
+    def fake_on_skill_diff(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(
+        "agent.panel_triggers.on_skill_diff", fake_on_skill_diff
+    )
+
+    with _patch.object(skill_manager_tool, "SKILLS_DIR", skills_root), \
+         _patch("agent.skill_utils.get_all_skills_dirs", return_value=[skills_root]):
+        result_json = skill_manager_tool.skill_manage(
+            action="patch",
+            name="panel-test",
+            old_string="old step",
+            new_string="new step",
+        )
+    result = json.loads(result_json)
+    assert result.get("success"), result
+    assert captured.get("skill_name") == "panel-test"
+    assert captured.get("action") == "patch"
+    assert "old step" in captured.get("before_text", "")
+    assert "new step" in captured.get("after_text", "")
+
+
+def test_skill_manage_patch_emit_failure_does_not_break_tool(monkeypatch, tmp_path):
+    """If the emitter raises, skill_manage must still return success."""
+    from unittest.mock import patch as _patch
+    from tools import skill_manager_tool
+
+    skills_root = tmp_path / "skills"
+    skills_root.mkdir()
+    skill_dir = skills_root / "panel-test2"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: panel-test2\ndescription: Another skill for panel emitter integration testing.\n---\n\nbefore\n",
+        encoding="utf-8",
+    )
+
+    def boom(**kwargs):
+        raise RuntimeError("panel down")
+
+    monkeypatch.setattr("agent.panel_triggers.on_skill_diff", boom)
+
+    with _patch.object(skill_manager_tool, "SKILLS_DIR", skills_root), \
+         _patch("agent.skill_utils.get_all_skills_dirs", return_value=[skills_root]):
+        result_json = skill_manager_tool.skill_manage(
+            action="patch",
+            name="panel-test2",
+            old_string="before",
+            new_string="after",
+        )
+    assert json.loads(result_json).get("success")
+
+
+# ---------- integration: conversation_loop wiring (source-level) ------------
+
+
+def test_conversation_loop_calls_on_process_output():
+    """The conversation_loop end-of-run hook must call panel on_process_output.
+
+    Source-level smoke test: exercising the full agent loop is far too heavy
+    for unit tests, so we verify the wiring is in place and references the
+    correct function with the right gating shape (length check + try/except).
+    """
+    import inspect
+    from agent import conversation_loop
+    src = inspect.getsource(conversation_loop)
+    assert "from agent.panel_triggers import on_process_output" in src
+    assert "on_process_output(" in src
+    # gated by length
+    assert "len(final_response) >= 500" in src
+
+
+def test_skill_manager_tool_calls_on_skill_diff():
+    """skill_manager_tool must invoke panel on_skill_diff after success."""
+    import inspect
+    from tools import skill_manager_tool
+    src = inspect.getsource(skill_manager_tool.skill_manage)
+    assert "on_skill_diff" in src
+    assert "_panel_before_text" in src
