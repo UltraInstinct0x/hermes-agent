@@ -162,15 +162,23 @@ export interface HermesWindowState {
 export interface DesktopConnectionConfig {
   envOverride: boolean
   mode: 'local' | 'remote'
+  remoteSource: 'manual' | 'ssh'
   remoteTokenPreview: string | null
   remoteTokenSet: boolean
   remoteUrl: string
+  sshCommand: string
+  sshHost: string
+  sshRemotePort: number
 }
 
 export interface DesktopConnectionConfigInput {
   mode: 'local' | 'remote'
+  remoteSource?: 'manual' | 'ssh'
   remoteToken?: string
   remoteUrl?: string
+  sshCommand?: string
+  sshHost?: string
+  sshRemotePort?: number
 }
 
 export interface DesktopConnectionTestResult {

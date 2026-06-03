@@ -448,6 +448,7 @@ function registerMediaProtocol() {
 
 let mainWindow = null
 let hermesProcess = null
+let sshTunnelProcess = null
 let connectionPromise = null
 // Auto-reload budget for renderer crashes. A deterministic startup crash would
 // otherwise loop forever (reload → crash → reload), pinning CPU and spamming
@@ -3051,6 +3052,51 @@ function tokenPreview(value) {
   return raw.length <= 8 ? 'set' : `...${raw.slice(-6)}`
 }
 
+function validateSshHostAlias(rawHost) {
+  const host = String(rawHost || '').trim()
+
+  if (!host) {
+    throw new Error('SSH host is required.')
+  }
+
+  if (!/^[A-Za-z0-9._@:\-[\]]+$/.test(host)) {
+    throw new Error('SSH host must be a host alias, hostname, or user@host without spaces or shell characters.')
+  }
+
+  return host
+}
+
+function validateSshRemotePort(rawPort) {
+  const port = Number(rawPort ?? 0)
+
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error('SSH remote port must be 0 (auto) or an integer between 1 and 65535.')
+  }
+
+  return port
+}
+
+function shQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`
+}
+
+function defaultSshDashboardCommand() {
+  return 'hermes dashboard --no-open --tui --host 127.0.0.1 --port {port} --skip-build'
+}
+
+function buildRemoteDashboardCommand({ token, remotePort, command }) {
+  const dashboardCommand = String(command || defaultSshDashboardCommand()).trim().replaceAll('{port}', String(remotePort))
+
+  if (!dashboardCommand) {
+    throw new Error('SSH dashboard command is required.')
+  }
+
+  return [
+    'mkdir -p ~/.hermes/logs',
+    `HERMES_DASHBOARD_SESSION_TOKEN=*** HERMES_DASHBOARD_TUI=1 nohup ${dashboardCommand} > ~/.hermes/logs/desktop-remote-dashboard.log 2>&1 &`
+  ].join(' && ')
+}
+
 function encryptDesktopSecret(value) {
   return encryptDesktopSecretStrict(value, safeStorage)
 }
@@ -3082,7 +3128,7 @@ function readDesktopConnectionConfig() {
     return connectionConfigCache
   }
 
-  let config = { mode: 'local', remote: {} }
+  let config = { mode: 'local', remote: {}, remoteSource: 'manual', ssh: {} }
 
   try {
     const raw = fs.readFileSync(DESKTOP_CONNECTION_CONFIG_PATH, 'utf8')
@@ -3091,7 +3137,9 @@ function readDesktopConnectionConfig() {
     if (parsed && typeof parsed === 'object') {
       config = {
         mode: parsed.mode === 'remote' ? 'remote' : 'local',
-        remote: parsed.remote && typeof parsed.remote === 'object' ? parsed.remote : {}
+        remote: parsed.remote && typeof parsed.remote === 'object' ? parsed.remote : {},
+        remoteSource: parsed.remoteSource === 'ssh' ? 'ssh' : 'manual',
+        ssh: parsed.ssh && typeof parsed.ssh === 'object' ? parsed.ssh : {}
       }
     }
   } catch {
@@ -3111,12 +3159,17 @@ function writeDesktopConnectionConfig(config) {
 
 function sanitizeDesktopConnectionConfig(config = readDesktopConnectionConfig()) {
   const remoteToken = decryptDesktopSecret(config.remote?.token)
+  const sshRemotePort = validateSshRemotePort(config.ssh?.remotePort ?? 0)
 
   return {
     mode: config.mode === 'remote' ? 'remote' : 'local',
+    remoteSource: config.remoteSource === 'ssh' ? 'ssh' : 'manual',
     remoteUrl: String(config.remote?.url || ''),
     remoteTokenPreview: tokenPreview(remoteToken),
     remoteTokenSet: Boolean(remoteToken),
+    sshHost: String(config.ssh?.host || ''),
+    sshRemotePort,
+    sshCommand: String(config.ssh?.command || defaultSshDashboardCommand()),
     envOverride: Boolean(process.env.HERMES_DESKTOP_REMOTE_URL)
   }
 }
@@ -3124,9 +3177,11 @@ function sanitizeDesktopConnectionConfig(config = readDesktopConnectionConfig())
 function coerceDesktopConnectionConfig(input = {}, existing = readDesktopConnectionConfig(), options = {}) {
   const persistToken = options.persistToken !== false
   const mode = input.mode === 'remote' ? 'remote' : 'local'
+  const remoteSource = input.remoteSource === 'ssh' ? 'ssh' : 'manual'
   const remoteUrl = String(input.remoteUrl ?? existing.remote?.url ?? '').trim()
   const incomingToken = typeof input.remoteToken === 'string' ? input.remoteToken.trim() : ''
   const existingToken = existing.remote?.token
+  const sshRemotePort = validateSshRemotePort(input.sshRemotePort ?? existing.ssh?.remotePort ?? 0)
   const nextRemote = {
     url: remoteUrl,
     token: incomingToken
@@ -3135,8 +3190,17 @@ function coerceDesktopConnectionConfig(input = {}, existing = readDesktopConnect
         : { encoding: 'plain', value: incomingToken }
       : existingToken
   }
+  const nextSsh = {
+    host: String(input.sshHost ?? existing.ssh?.host ?? '').trim(),
+    remotePort: sshRemotePort,
+    command: String(input.sshCommand ?? existing.ssh?.command ?? defaultSshDashboardCommand()).trim()
+  }
 
-  if (mode === 'remote') {
+  if (mode === 'remote' && remoteSource === 'ssh') {
+    nextSsh.host = validateSshHostAlias(nextSsh.host)
+    nextSsh.remotePort = validateSshRemotePort(nextSsh.remotePort)
+    nextSsh.command ||= defaultSshDashboardCommand()
+  } else if (mode === 'remote') {
     nextRemote.url = normalizeRemoteBaseUrl(remoteUrl)
 
     if (!decryptDesktopSecret(nextRemote.token)) {
@@ -3146,7 +3210,7 @@ function coerceDesktopConnectionConfig(input = {}, existing = readDesktopConnect
     nextRemote.url = normalizeRemoteBaseUrl(remoteUrl)
   }
 
-  return { mode, remote: nextRemote }
+  return { mode, remote: nextRemote, remoteSource, ssh: nextSsh }
 }
 
 function resolveRemoteBackend() {
@@ -3174,7 +3238,7 @@ function resolveRemoteBackend() {
 
   const config = readDesktopConnectionConfig()
 
-  if (config.mode !== 'remote') {
+  if (config.mode !== 'remote' || config.remoteSource === 'ssh') {
     return null
   }
 
@@ -3198,21 +3262,174 @@ function resolveRemoteBackend() {
   }
 }
 
+function resolveSshRemoteConfig(config = readDesktopConnectionConfig()) {
+  if (process.env.HERMES_DESKTOP_REMOTE_URL || config.mode !== 'remote' || config.remoteSource !== 'ssh') {
+    return null
+  }
+
+  const remotePort = validateSshRemotePort(config.ssh?.remotePort ?? 0)
+
+  return {
+    host: validateSshHostAlias(config.ssh?.host),
+    remotePort,
+    command: String(config.ssh?.command || defaultSshDashboardCommand()).trim()
+  }
+}
+
+async function runSshCommand(host, remoteCommand, options = {}) {
+  const child = spawn('ssh', [host, remoteCommand], {
+    cwd: app.getPath('home'),
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  let stdout = ''
+  let stderr = ''
+
+  child.stdout.on('data', chunk => {
+    stdout += chunk.toString('utf8')
+  })
+  child.stderr.on('data', chunk => {
+    stderr += chunk.toString('utf8')
+  })
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill('SIGTERM')
+      reject(new Error(`SSH command timed out after ${options.timeoutMs || 15_000}ms`))
+    }, options.timeoutMs || 15_000)
+
+    child.once('error', error => {
+      clearTimeout(timeout)
+      reject(error)
+    })
+    child.once('exit', code => {
+      clearTimeout(timeout)
+      if (code === 0) {
+        resolve({ stdout, stderr })
+        return
+      }
+      reject(new Error(`SSH command failed (${code}): ${(stderr || stdout || '').trim()}`))
+    })
+  })
+}
+
+async function pickRemoteSshPort(host) {
+  const probe = [
+    'python3 - <<\'PY\'',
+    'import socket',
+    's = socket.socket()',
+    's.bind(("127.0.0.1", 0))',
+    'print(s.getsockname()[1])',
+    's.close()',
+    'PY'
+  ].join('\n')
+  const result = await runSshCommand(host, probe, { timeoutMs: 15_000 })
+  const port = Number(String(result.stdout || '').trim().split(/\s+/).pop())
+
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Could not pick a remote dashboard port on ${host}.`)
+  }
+
+  return port
+}
+
+async function connectSshRemoteBackend(sshConfig, options = {}) {
+  const trackProcess = options.trackProcess !== false
+  const localPort = await pickPort()
+  const remotePort = sshConfig.remotePort === 0 ? await pickRemoteSshPort(sshConfig.host) : sshConfig.remotePort
+  const token = crypto.randomBytes(32).toString('base64url')
+  const baseUrl = `http://127.0.0.1:${localPort}`
+  const tunnelArgs = [
+    '-N',
+    '-o',
+    'ExitOnForwardFailure=yes',
+    '-L',
+    `127.0.0.1:${localPort}:127.0.0.1:${remotePort}`,
+    sshConfig.host
+  ]
+
+  await advanceBootProgress('backend.remote.ssh', `Opening SSH tunnel to ${sshConfig.host}`, 24)
+  rememberLog(`Opening SSH tunnel to ${sshConfig.host} (${baseUrl} → 127.0.0.1:${remotePort})`)
+
+  const tunnelProcess = spawn('ssh', tunnelArgs, {
+    cwd: app.getPath('home'),
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  if (trackProcess) {
+    sshTunnelProcess = tunnelProcess
+  }
+  tunnelProcess.stdout.on('data', rememberLog)
+  tunnelProcess.stderr.on('data', rememberLog)
+
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(resolve, 1200)
+    tunnelProcess.once('error', error => {
+      clearTimeout(timeout)
+      reject(error)
+    })
+    tunnelProcess.once('exit', code => {
+      clearTimeout(timeout)
+      reject(new Error(`SSH tunnel exited before it was ready (${code ?? 'signal'})`))
+    })
+  })
+
+  try {
+    await advanceBootProgress('backend.remote.ssh.command', `Starting remote Hermes dashboard on ${sshConfig.host}`, 42)
+    await runSshCommand(
+      sshConfig.host,
+      buildRemoteDashboardCommand({ token, remotePort, command: sshConfig.command }),
+      { timeoutMs: 20_000 }
+    )
+
+    await waitForHermes(baseUrl, token)
+  } catch (error) {
+    if (!tunnelProcess.killed) {
+      tunnelProcess.kill('SIGTERM')
+    }
+    if (trackProcess && sshTunnelProcess === tunnelProcess) {
+      sshTunnelProcess = null
+    }
+    throw error
+  }
+
+  return {
+    baseUrl,
+    mode: 'remote',
+    source: 'ssh',
+    token,
+    wsUrl: buildGatewayWsUrl(baseUrl, token),
+    dispose: trackProcess
+      ? undefined
+      : () => {
+          if (!tunnelProcess.killed) {
+            tunnelProcess.kill('SIGTERM')
+          }
+        }
+  }
+}
+
 async function testDesktopConnectionConfig(input = {}) {
   const config = coerceDesktopConnectionConfig(input, readDesktopConnectionConfig(), { persistToken: false })
-  const remote =
-    config.mode === 'remote'
+  const sshConfig = config.mode === 'remote' && config.remoteSource === 'ssh' ? resolveSshRemoteConfig(config) : null
+  const remote = sshConfig
+    ? await connectSshRemoteBackend(sshConfig, { trackProcess: false })
+    : config.mode === 'remote'
       ? {
           baseUrl: normalizeRemoteBaseUrl(config.remote.url),
           token: decryptDesktopSecret(config.remote.token)
         }
       : resolveRemoteBackend() || (await startHermes())
-  const status = await fetchJson(`${remote.baseUrl}/api/status`, remote.token, { timeoutMs: 8_000 })
+  try {
+    const status = await fetchJson(`${remote.baseUrl}/api/status`, remote.token, { timeoutMs: 8_000 })
 
-  return {
-    ok: true,
-    baseUrl: remote.baseUrl,
-    version: status?.version || null
+    return {
+      ok: true,
+      baseUrl: remote.baseUrl,
+      version: status?.version || null
+    }
+  } finally {
+    remote.dispose?.()
   }
 }
 
@@ -3236,7 +3453,12 @@ function resetHermesConnection() {
     hermesProcess.kill('SIGTERM')
   }
 
+  if (sshTunnelProcess && !sshTunnelProcess.killed) {
+    sshTunnelProcess.kill('SIGTERM')
+  }
+
   hermesProcess = null
+  sshTunnelProcess = null
   resetBootProgressForReconnect()
 }
 
@@ -3254,6 +3476,23 @@ async function startHermes() {
 
   connectionPromise = (async () => {
     await advanceBootProgress('backend.resolve', 'Resolving Hermes backend', 8)
+    const sshConfig = resolveSshRemoteConfig()
+    if (sshConfig) {
+      const remote = await connectSshRemoteBackend(sshConfig)
+      updateBootProgress({
+        phase: 'backend.ready',
+        message: 'Remote Hermes backend is ready over SSH',
+        progress: 94,
+        running: true,
+        error: null
+      })
+      return {
+        ...remote,
+        logs: hermesLog.slice(-80),
+        ...getWindowState()
+      }
+    }
+
     const remote = resolveRemoteBackend()
     if (remote) {
       await advanceBootProgress('backend.remote', `Connecting to remote Hermes backend at ${remote.baseUrl}`, 24)
