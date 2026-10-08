@@ -1531,6 +1531,67 @@ def _preview_action_request(sid: str, payload: dict) -> str:
     return answer or _PREVIEW_ACTION_BRIDGE_UNAVAILABLE
 
 
+# ── app.action bridge (agent drives the desktop app's own UI) ─────────────────────
+
+
+_APP_ACTION_TIMEOUT_S = 45
+# Until a session's client has proven it answers app.action at all, hold it to a
+# deadline a working renderer cannot miss (same ladder as preview.act / tour).
+_APP_ACTION_PROBE_TIMEOUT_S = 10
+_APP_ACTION_REPROBE_COOLDOWN_S = 30
+
+_APP_ACTION_BRIDGE_UNAVAILABLE = json.dumps({
+    "success": False,
+    "ok": False,
+    "action": "",
+    "detail": ("No Hermes app window answered the action request. The app.action bridge is "
+               "served by the desktop app's renderer, which updates separately from this "
+               "backend, so an app build older than the tool has nothing listening. Update "
+               "the Hermes app, open this chat in it, and try again in this session after a "
+               "short cooldown.")})
+
+# One in-flight cooldown-expiry reprobe per session: concurrent callers fail fast.
+_app_action_reprobe: dict[str, object] = {}
+_app_action_reprobe_lock = threading.Lock()
+
+
+def _app_action_request(sid: str, payload: dict) -> str:
+    """Bridge the app_action callback onto an ``app.action`` server request without paying for a
+    client that cannot answer (same probe ladder as drive_preview): first action per session gets
+    the short probe deadline; unanswered -> bridge marked unavailable with a cooldown-gated
+    reprobe; once answered, the full deadline. The verdict lives on the session record, so a new
+    session re-probes."""
+    with _sessions_lock:
+        session = _sessions.get(sid)
+        if session is None:
+            session = {}
+        state = session.get("app_action_bridge")
+        now = time.monotonic()
+        if state == "unanswered" and now < session.get("app_action_bridge_retry_at", 0):
+            return _APP_ACTION_BRIDGE_UNAVAILABLE
+        if state == "unanswered":
+            with _app_action_reprobe_lock:
+                if _app_action_reprobe.get(sid) is not None:
+                    return _APP_ACTION_BRIDGE_UNAVAILABLE
+                _app_action_reprobe[sid] = object()
+                session["app_action_bridge_retry_at"] = now + _APP_ACTION_REPROBE_COOLDOWN_S
+    try:
+        answer = _ask("app.action", sid, dict(payload),
+                      timeout=_APP_ACTION_TIMEOUT_S if state == "answered"
+                      else _APP_ACTION_PROBE_TIMEOUT_S)
+    finally:
+        if state == "unanswered":
+            with _app_action_reprobe_lock:
+                _app_action_reprobe.pop(sid, None)
+    with _sessions_lock:
+        if answer:
+            session["app_action_bridge"] = "answered"
+        elif session.get("app_action_bridge") != "answered":
+            session["app_action_bridge"] = "unanswered"
+            session["app_action_bridge_retry_at"] = time.monotonic() + _APP_ACTION_REPROBE_COOLDOWN_S
+    return answer or _APP_ACTION_BRIDGE_UNAVAILABLE
+
+
 def _clear_pending(sid: str | None = None) -> None:
     """Withdraw open server→client requests: only *sid*'s (session.interrupt must not cancel other sessions'
     prompts), or every one when *sid* is None (process exit). Each one gets a ``request.cancel``."""
