@@ -140,6 +140,7 @@ def _emit_reasoning_delta(sid: str, text: str) -> None:
 
 def _agent_cbs(sid: str) -> dict:
     # Late import: bind_module rebinds this function to server.py's globals and skips plain imports.
+    from tui_gateway.app_action_bridge import app_action_request
     from tui_gateway.theme_bridge import theme_request
 
     def _read_block(method: str, timeout: int):
@@ -181,7 +182,9 @@ def _agent_cbs(sid: str) -> dict:
         "tour_callback": lambda payload: _tour_request(sid, payload),
         # set_theme (desktop GUI): theme.apply with the tour probe ladder, or a theme.pick card.
         "theme_callback": lambda payload: theme_request(sid, payload),
-        "setup_beat_callback": lambda payload: _setup_beat_request(sid, payload)}
+        "setup_beat_callback": lambda payload: _setup_beat_request(sid, payload),
+        # app_action (desktop GUI): a named UI action the renderer runs; probe ladder in app_action_bridge.
+        "app_action_callback": lambda payload: app_action_request(sid, dict(payload))}
 
     # Interim assistant commentary (text alongside tool calls), gated on display.interim_assistant_
     # messages; _run_prompt_submit overwrites it per turn and clears it so a stale closure can't fire.
