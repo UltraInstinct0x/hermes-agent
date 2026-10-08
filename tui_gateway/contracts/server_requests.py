@@ -286,6 +286,17 @@ server_request("preview.act", params=PreviewActRequestParams, result=ValueResult
                doc="Click / type / scroll / annotate inside the in-app browser preview.")
 
 
+class AppActionRequestParams(ServerRequestParams):
+    """``tools/app_action_tool.py`` payload: one stable action id plus its args object."""
+
+    action: str
+    args: dict[str, JsonValue] | None = None
+
+
+server_request("app.action", params=AppActionRequestParams, result=ValueResult,
+               doc="Run one named UI action in the desktop app; answers with its JSON result.")
+
+
 class TourStep(Params):
     selector: str | None = None
     title: str | None = None

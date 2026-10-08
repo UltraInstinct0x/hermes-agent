@@ -281,6 +281,10 @@ _RAW_INLINE_TOOL_EXECUTORS: dict[str, InlineToolExecutor] = {
         "tools.annotate_preview_tool", "annotate_preview_tool", "drive_preview_callback",
         ("action", "action", "add"), ("ref", "ref"), ("selector", "selector"), ("label", "label"),
     ),
+    "app_action": _callback_tool(
+        "tools.app_action_tool", "app_action_tool", "app_action_callback",
+        ("action", "action", ""), ("args", "args"),
+    ),
     "read_window_below": _callback_tool(
         "tools.read_window_tool", "read_window_below_tool", "read_window_below_callback",
     ),
