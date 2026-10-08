@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 # Agent attributes ``wire`` installs for one local-viewer turn (restored by ``local_viewer_events``).
 CALLBACK_ATTRS = ("read_terminal_callback", "read_preview_callback", "drive_preview_callback",
                   "read_window_below_callback", "theme_callback", "tour_callback", "setup_beat_callback",
-                  "connection_callback")
+                  "connection_callback", "app_action_callback")
 
 # main: tui_gateway/agent_callbacks.py ``_read_block`` budgets and tui_gateway/server.py's preview.act ladder.
 _TERMINAL_READ_TIMEOUT_S = 30
@@ -66,11 +66,23 @@ _TOUR_BRIDGE_UNAVAILABLE = json.dumps({
               "has nothing listening. Update the Hermes Desktop app and start a new session. Do not retry tour "
               "in this session.")})
 
+_APP_ACTION_TIMEOUT_S = 45
+_APP_ACTION_PROBE_TIMEOUT_S = 10
+_APP_ACTION_REPROBE_COOLDOWN_S = 30
+_APP_ACTION_BRIDGE_UNAVAILABLE = json.dumps({
+    "success": False, "ok": False, "action": "",
+    "detail": ("No Hermes app window answered the action request. The app.action bridge is served by the "
+               "desktop app's renderer, which updates separately from this backend, so an app build older "
+               "than the tool has nothing listening. Update the Hermes app, open this chat in it, and try "
+               "again in this session after a short cooldown.")})
+
 _lock = threading.Lock()
 # turn key (the turn's bound HERMES_SESSION_ID) -> publish(event_type, payload) of the live turn
 _turns: dict[str, object] = {}
 # canonical session id -> {"state": "answered"|"unanswered", "retry_at": monotonic}
 _preview_bridge: dict[str, dict] = {}
+# canonical session id -> {"state": "answered"|"unanswered", "retry_at": monotonic} for app.action
+_app_action_bridge: dict[str, dict] = {}
 # canonical session id -> "answered" | "unanswered" (main: the session record's ``tour_bridge``)
 _tour_bridge: dict[str, str] = {}
 # process ``session_key`` -> (authority, canonical session id) of the session that last ran a turn with it
@@ -247,6 +259,28 @@ def _preview_action(turn, agent, payload) -> str:
     return answer or _PREVIEW_ACTION_BRIDGE_UNAVAILABLE
 
 
+def _app_action(turn, agent, payload) -> str:
+    """app_action: the preview.act probe ladder over the ``app.action`` server request."""
+    session_id = turn._approval_owner[1]
+    now = time.monotonic()
+    with _lock:
+        bridge = _app_action_bridge.setdefault(session_id, {})
+        state = bridge.get("state")
+        if state == "unanswered" and now < bridge.get("retry_at", 0):
+            return _APP_ACTION_BRIDGE_UNAVAILABLE
+        if state == "unanswered":
+            bridge["retry_at"] = now + _APP_ACTION_REPROBE_COOLDOWN_S
+    answer = _ask(turn, agent, "app.action", payload,
+                  _APP_ACTION_TIMEOUT_S if state == "answered" else _APP_ACTION_PROBE_TIMEOUT_S)
+    with _lock:
+        if answer:
+            bridge["state"] = "answered"
+        elif bridge.get("state") != "answered" and not getattr(agent, "_interrupt_requested", False):
+            bridge["state"] = "unanswered"
+            bridge["retry_at"] = time.monotonic() + _APP_ACTION_REPROBE_COOLDOWN_S
+    return answer or _APP_ACTION_BRIDGE_UNAVAILABLE
+
+
 def wire(turn, agent):
     """Install the window bridges for one local-viewer turn; returns the registry key to release."""
     owner = getattr(turn, "_approval_owner", None)
@@ -274,6 +308,7 @@ def wire(turn, agent):
     agent.setup_beat_callback = lambda payload: _setup_beat(turn, agent, dict(payload or {}))
     # Fire-and-forget: the tool thread waits on its own operation; the card answers by op_id.
     agent.connection_callback = lambda payload: publish("connection.request", dict(payload)) and None
+    agent.app_action_callback = lambda payload: _app_action(turn, agent, dict(payload or {}))
     return key, publish
 
 
