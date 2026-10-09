@@ -67,11 +67,21 @@ def _(rid, params: dict) -> dict:
     try:
         from tools.bot_desktop import lease as _bd_lease
         before = _bd_lease.get()
-        if before.holder == _bd_lease.HUMAN:
+        # The holder's OWN viewer must still receive frames: suppressing every client while a human
+        # drives blanked the screen for the person who took control. A client that is not the holder
+        # still gets nothing, so the agent cannot watch what the human types.
+        caller_viewer = str((params or {}).get("viewer_id") or "")
+        holder_viewer = str(getattr(before, "viewer_id", "") or "")
+        if before.holder == _bd_lease.HUMAN and not (caller_viewer and caller_viewer == holder_viewer):
             return _ok(rid, {"data_url": None, "suppressed": "human_has_control"})
         from tools.bot_desktop.thumbnail import thumbnail_data_url
         data_url = thumbnail_data_url()
-        if _bd_lease.get().epoch != before.epoch:
+        after = _bd_lease.get()
+        if after.epoch != before.epoch and not (
+            after.holder == _bd_lease.HUMAN
+            and caller_viewer
+            and caller_viewer == str(getattr(after, "viewer_id", "") or "")
+        ):
             return _ok(rid, {"data_url": None, "suppressed": "human_has_control"})
         return _ok(rid, {"data_url": data_url})
     except Exception as e:
