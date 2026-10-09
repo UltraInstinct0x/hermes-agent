@@ -80,8 +80,17 @@ class DisplayThumbnailResult(Result):
     suppressed: str | None = None
 
 
-method("display.thumbnail", params=ProfileParams, result=DisplayThumbnailResult,
-       doc="One JPEG grab of the bot's screen; read-only, never changes the lease.")
+class DisplayThumbnailParams(ProfileParams):
+    # The viewer id this window minted via display.observe. Presenting it lets the lease HOLDER keep
+    # receiving its own frames while a human drives; a client that does not present it is suppressed
+    # as before. Without this field the schema rejected the extra parameter (code 4000) and every
+    # thumbnail call failed.
+    viewer_id: str | None = None
+
+
+method("display.thumbnail", params=DisplayThumbnailParams, result=DisplayThumbnailResult,
+       doc="One JPEG grab of the bot's screen; read-only, never changes the lease. A client "
+           "presenting the holder's viewer id keeps receiving frames while a human drives.")
 
 method("display.start", params=ProfileParams, result=DisplayStatus,
        doc="Start this profile's Xvnc + Xfce (idempotent); blocks until the display is published.")
