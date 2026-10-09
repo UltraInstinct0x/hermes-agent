@@ -494,9 +494,25 @@ def _builtin_session(provider: str, stt_config: dict[str, Any], language: Option
     return None
 
 
+def _ensure_plugins_discovered() -> None:
+    """Plugin STT providers register while the ACTIVE profile home's plugins are discovered.
+
+    Another audio path (TTS) happens to trigger that discovery; the live-STT path did not. A process
+    serving a second profile (a dashboard hosting ``?profile=B``) therefore answered that profile's
+    FIRST live-STT request with "no live STT for the configured provider" and only worked after a TTS
+    call had run. Idempotent per home, and it joins a discovery already in flight.
+    """
+    try:
+        from hermes_cli.plugins import discover_plugins
+        discover_plugins()
+    except Exception:
+        logger.debug("plugin discovery before live STT failed", exc_info=True)
+
+
 def _plugin_session(provider: str, language: Optional[str], prompt: Optional[str],
                     on_partial: Optional[PartialCallback]) -> Optional[StreamingSession]:
     from agent.transcription_registry import get_provider
+    _ensure_plugins_discovered()
     registered = get_provider(provider)
     if registered is None or not registered.streaming_capable:
         return None
@@ -513,6 +529,7 @@ def streaming_available(stt_config: Optional[dict[str, Any]] = None) -> bool:
     if provider in STREAMING_PROVIDERS:
         return _builtin_session(provider, cfg, None, None, None) is not None
     from agent.transcription_registry import get_provider
+    _ensure_plugins_discovered()
     registered = get_provider(provider)
     return bool(registered is not None and registered.streaming_capable)
 
