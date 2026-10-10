@@ -286,7 +286,13 @@ def _list_payload(parent_agent: Any) -> dict[str, Any]:
             "accepting_steer": bool(r.get("accepting_steer", False)),
             "live_transcript": getattr(r.get("agent"), "_live_transcript_path", None),
         })
-    payload: dict[str, Any] = {"action": "list", "count": len(entries), "subagents": entries}
+    from tools.delegate_tool import _get_max_total_children
+    from tools.delegation_child_budget import live_children
+    payload: dict[str, Any] = {
+        "action": "list", "count": len(entries), "subagents": entries,
+        # Process-wide, all conversations and depths: what delegation.max_total_children is charged against.
+        "child_budget": {"live": live_children(), "limit": _get_max_total_children()},
+    }
     if not entries:
         payload["note"] = (
             "No live subagents right now. Children that already finished "
