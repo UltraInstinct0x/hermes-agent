@@ -735,6 +735,22 @@ class MessageReactionPayload(Payload):
 event("message.reaction", MessageReactionPayload, doc="The agent reacted to a message; paint it live.")
 
 
+class MessageNoticePayload(Payload):
+    """``session_notifications._apply_cron_notice`` — a ``cron_notice`` row just persisted into the session
+    (``cron.bot_chat_delivery_mode: notice``). Same keys the ``session.history`` projection carries."""
+
+    row_id: int
+    role: str
+    text: str
+    display_kind: str
+    display_metadata: dict[str, JsonValue]
+    timestamp: float
+
+
+event("message.notice", MessageNoticePayload,
+      doc="A cron job posted its output into this session as a notice row; paint it, no agent turn runs.")
+
+
 class TerminalOutputPayload(Payload):
     """``session_notifications`` process_registry.on_output."""
 
