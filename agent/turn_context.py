@@ -234,7 +234,9 @@ def _maybe_title_session_at_turn_start(
             if not getattr(agent, "_session_db_created", False):
                 return
         if platform == "subagent":
-            apply_subagent_title(session_db, session_id, user_text)
+            # A resumed child keeps the title of its original goal (that is how it is found again).
+            if not getattr(agent, "_delegate_resumed", False):
+                apply_subagent_title(session_db, session_id, user_text)
             return
         # Snapshot runtime identity so the background titler can skip if the user
         # switches models before it fires.

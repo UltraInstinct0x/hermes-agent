@@ -659,6 +659,7 @@ class SubagentEventPayload(Payload):
     summary: str | None = None
     duration_seconds: float | None = None
     tool_preview: str | None = None
+    resumed: bool | None = None  # true when an earlier finished child (same child_session_id) was continued
 
 
 for _name, _doc in (
