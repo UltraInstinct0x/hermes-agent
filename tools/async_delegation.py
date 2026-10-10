@@ -725,6 +725,13 @@ def active_count() -> int:
         return sum(1 for r in _records.values() if r.get("status") in _LIVE_STATES)
 
 
+def is_delegation_live(delegation_id: str) -> bool:
+    """Whether the registry still tracks this unit as running/stalling/finalizing."""
+    with _records_lock:
+        record = _records.get(delegation_id)
+        return record is not None and record.get("status") in _LIVE_STATES
+
+
 def active_task_count() -> int:
     """Number of running child subagents (a batch of N contributes N; a batch with
     no goal list counts 1) — the truthful observability figure, unlike slots."""
