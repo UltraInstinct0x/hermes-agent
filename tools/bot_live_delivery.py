@@ -197,9 +197,12 @@ def _write(path: Path, record: dict[str, Any]) -> None:
 def deliver_to_live_owner(
     profile_home: Path | str, owner: dict[str, Any], message: str,
     *, delivery_id: str | None = None, author: dict[str, Any] | None = None,
-    notification_category: str = "result",
+    notification_category: str = "result", notice: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return durable admission immediately, without waiting for the owner.
+
+    ``notice`` (a metadata dict carrying ``delivery_id``) makes this a ``kind="notice"`` envelope: the
+    owner posts ``message`` as a ``cron_notice`` row and settles the receipt WITHOUT starting an agent turn.
 
     Retry with the same id AND pinned owner/message to inspect the existing
     state. Reusing an id with a different payload is an error, never an overwrite.
@@ -213,7 +216,8 @@ def deliver_to_live_owner(
         existing = _read(path)
         if existing is not None:
             if (existing["owner"] != pinned or existing["message"] != message or existing.get("author") != author
-                    or existing.get("notification_category", "result") != notification_category):
+                    or existing.get("notification_category", "result") != notification_category
+                    or existing.get("notice") != (dict(notice) if notice else None)):
                 raise ValueError("delivery id already belongs to a different payload")
             return existing
         record = dict(delivery_id=key, id=key, owner=pinned, **pinned,
@@ -221,6 +225,8 @@ def deliver_to_live_owner(
                       sequence=_next_sequence(root), **({"author": dict(author)} if author else {}))
         if notification_category == "diagnostic":
             record["notification_category"] = notification_category
+        if notice:
+            record.update(kind="notice", notice=dict(notice))
         _write(path, record)
         return record
 
