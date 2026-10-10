@@ -664,11 +664,20 @@ error. A delivery failure does not count toward the job's `failure_streak`
 
 - `bot-chat` (bare) targets the job's own profile.
 - `bot-chat:<profile>` targets another profile **on the same machine**. Names are validated against `hermes profile list` when the job is created; profiles on other gateways or machines can never be targeted, so same-named profiles across machines are unambiguous.
-- Each delivery costs the target bot one full agent turn — mind the schedule frequency.
+- Each delivery costs the target bot one full agent turn — mind the schedule frequency (or use `+notice`, below, to post without a turn).
 - Composes with other targets (`bot-chat,telegram`) but is never included in `all`.
 - If the canonical chat is open in a mailbox-capable Desktop/TUI backend, delivery is **durably queued immediately**, whether the bot is idle or busy. Only that live owner runs the incoming turn; cron does not start a competing CLI writer. A profile that has no Bot Chat yet gets one created on first delivery. If the target profile's gateway is not running, the run is recorded `delivery_failed` with the reason (the output stays in `hermes cron runs`; it is not redelivered automatically) and cron never starts its own Bot Chat turn.
 - **Queued is not completed.** Cron records receipt IDs and `queued`/`claimed` statuses in `last_delivery_queued`, with delivery outcome `queued` (neither delivered nor failed). A successful job shows `delivery_queued`; genuine errors on other targets still take precedence as delivery failures. The bot may complete later. The durable receipt in the target profile's `runtime/bot_live_delivery/<receipt-id>.json` is authoritative for the turn itself. For an agent job the send rides the gateway delivery queue, and once the gateway has handed it to the bot the run settles to `ok` (accepted, not answered) while `last_delivery_queued` keeps the receipt; a refused hand-off settles to `delivery_failed`. Script-only (`no_agent`) Bot Chat deliveries stay `delivery_queued`: cron never rewrites that history when the bot's turn later completes.
 - Rechecking the same execution inspects its existing receipt, even if the owner has disappeared. It never falls back to another writer after acceptance. `failed`, `cancelled`, or `ambiguous` receipts are not automatically replayed; inspect the chat and receipt before intentionally starting new work. Each new cron execution has a distinct delivery ID.
+
+#### Notice mode (`bot-chat+notice`): post the output, no agent turn
+
+By default (`turn`) the output starts a full agent turn, so the owner sees the output *and* the bot's restatement, and each delivery costs a model call. In `notice` mode the output is posted into the Bot Chat as a notification row and **no turn runs**.
+
+- Select it per target with a `+notice` suffix (`bot-chat+notice`, `bot-chat:research+notice`), per job with a `bot_chat_delivery_mode: notice` field, or for every bot-chat delivery with `cron.bot_chat_delivery_mode: notice` in `config.yaml`. Precedence: target suffix, then job field, then config, then `turn` (the default). An unknown value falls back to `turn`.
+- The row is `role: assistant`, `display_kind: cron_notice`, with `display_metadata` = `{delivery_id, cron_job_id, cron_job_name, cron_run_id, source: "cron", notification_category: "result" | "diagnostic"}`. The text is the scrubbed job output (the same fail-closed redaction as every outward lane). It is not a user message and never wakes the agent. Because it is a normal assistant row, the bot sees it as prior context on its next turn.
+- A mailbox-capable open Desktop/TUI owner receives it at its next idle boundary: the row is persisted, the live history is updated, and a `message.notice` event (`{row_id, role, text, display_kind, display_metadata, timestamp}`) is sent to the attached client. With no owner the row is written directly (creating the Bot Chat if missing) and shows on the next history read. A CLI-only owner is handled like `turn`: the notice is deferred and posted after it releases the chat.
+- Idempotent on the execution: the same run never posts twice, across retries, processes and compression rotations. A missing destination is reported, not recreated, and a notice only ever lands in the targeted profile's own Bot Chat.
 
 ### Routing intent (`all`)
 

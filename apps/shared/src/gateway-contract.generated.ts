@@ -1396,6 +1396,10 @@ export interface DisplayLease {
   reason?: string
 }
 export type LeaseHolder = 'agent' | 'human'
+export interface DisplayThumbnailParams {
+  profile?: string | null
+  viewer_id?: string | null
+}
 /** ``data_url`` is null while the screen is stopped or while a human holds the lease (``suppressed``): the frame may show what they are typing. */
 export interface DisplayThumbnailResult {
   data_url?: string | null
@@ -5971,6 +5975,15 @@ export interface MessageReactionPayload {
   reactions: MessageReaction[]
   role: string
 }
+/** ``session_notifications._apply_cron_notice`` — a ``cron_notice`` row just persisted into the session (``cron.bot_chat_delivery_mode: notice``). Same keys the ``session.history`` projection carries. */
+export interface MessageNoticePayload {
+  row_id: number
+  role: string
+  text: string
+  display_kind: string
+  display_metadata: Record<string, unknown>
+  timestamp: number
+}
 /** ``session_notifications`` process_registry.on_output. */
 export interface TerminalOutputPayload {
   process_id: string
@@ -6139,8 +6152,8 @@ export interface RpcMethods {
   'display.stop': { params: DisplayStopParams; result: DisplayStopResult }
   /** Decide the pending default sandbox image switch for this profile; refused when none is pending. */
   'display.switchSandboxImage': { params: DisplaySwitchSandboxImageParams; result: DisplaySwitchSandboxImageResult }
-  /** One JPEG grab of the bot's screen; read-only, never changes the lease. */
-  'display.thumbnail': { params: ProfileParams; result: DisplayThumbnailResult }
+  /** One JPEG grab of the bot's screen; read-only, never changes the lease. A client presenting the holder's viewer id keeps receiving frames while a human drives. */
+  'display.thumbnail': { params: DisplayThumbnailParams; result: DisplayThumbnailResult }
   /** Stage a non-image file into the session workspace and hand back its @file: ref. */
   'file.attach': { params: FileAttachParams; result: FileAttachResult }
   /** Mark the one-time availability notice as shown on the free-tier identity. */
@@ -7045,6 +7058,8 @@ export interface BackendGatewayEventMap {
   'message.delta': MessageDeltaPayload
   /** Interim assistant commentary (text beside tool calls) sealed as its own segment. */
   'message.interim': MessageInterimPayload
+  /** A cron job posted its output into this session as a notice row; paint it, no agent turn runs. */
+  'message.notice': MessageNoticePayload
   /** The agent reacted to a message; paint it live. */
   'message.reaction': MessageReactionPayload
   /** A turn began streaming; an automation turn carries its async-result card. */
@@ -7183,6 +7198,7 @@ export const GATEWAY_EVENT_TYPES = [
   'message.complete',
   'message.delta',
   'message.interim',
+  'message.notice',
   'message.reaction',
   'message.start',
   'moa.aggregating',
