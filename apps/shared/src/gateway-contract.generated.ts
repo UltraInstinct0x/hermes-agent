@@ -5909,6 +5909,7 @@ export interface SubagentEventPayload {
   summary?: string | null
   duration_seconds?: number | null
   tool_preview?: string | null
+  resumed?: boolean | null
 }
 /** ``tools/delegate_tool_results.py::_extract_output_tail`` row. */
 export interface SubagentOutputTailEntry {
