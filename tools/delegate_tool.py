@@ -30,12 +30,12 @@ from tools.delegate_tool_child_run import (
 )
 from tools.delegate_tool_config import (
     _DEFAULT_MAX_CONCURRENT_CHILDREN, _get_child_timeout, _get_max_async_children, _get_max_concurrent_children,
-    _get_max_spawn_depth, _get_oneshot_max_children, _get_orchestrator_enabled, _get_subagent_approval_callback, _get_worktree_isolation,
+    _get_max_spawn_depth, _get_max_total_children, _get_oneshot_max_children, _get_orchestrator_enabled, _get_subagent_approval_callback, _get_worktree_isolation,
     _inherit_parent_capabilities, _load_config, _merge_request_overrides, _resolve_child_credential_pool,
     _resolve_child_runtime, _resolve_delegation_credentials,
     _subagent_auto_approve, _subagent_auto_deny,
 )
-from tools.delegate_tool_dispatch import _Batch, _announce_batch, _capture_origin, _run_batch
+from tools.delegate_tool_dispatch import _Batch, _admit_children, _announce_batch, _capture_origin, _run_batch
 from tools.delegate_tool_progress import (
     DelegateEvent, SUBAGENT_FAILURE_STATUSES, _batch_prefix, _build_child_progress_callback,
     _build_child_system_prompt, _clean_error_text, _emit_parent_console, _quiet, _resolve_workspace_hint,
@@ -660,12 +660,65 @@ def delegate_task(
     if err:
         return tool_error(err)
     # A backend-refused task never builds a child, so its resume claim (if any) must not linger past this call:
-    # release it here while the remaining plans ride the inline dispatch below.
+    # release it here while the remaining plans ride the leased dispatch below.
     for _refused_i in (i for i, r in enumerate(routes) if r.error):
         _plan = resume_plans.pop(_refused_i, None)
         if _plan is not None:
             release_resume(_plan.session_id)
-    err = _oneshot_spawn_budget(parent_agent, len(runnable))
+    # Admit the call against delegation.max_total_children before anything is built; the lease is settled on every
+    # exit path (build error, exception, interrupt): children that never started are never left charged.
+    lease, refusal = _admit_children(len(runnable), parent_agent)
+    if refusal:
+        _release_plans(resume_plans)
+        return tool_error(refusal)
+    try:
+        return _dispatch_leased_task_list(
+            task_list, task_schemas, task_images, routes, refused, creds=creds, top_role=top_role,
+            max_children=max_children, default_max_iter=default_max_iter, parent_agent=parent_agent,
+            background=background, resume_plans=resume_plans, lease=lease, n_runnable=len(runnable), context=context,
+        )
+    except BaseException:
+        _release_plans(resume_plans)
+        raise
+    finally:
+        lease.release_unclaimed()
+
+
+def _tasks_name_a_resume(tasks: Any) -> bool:
+    return isinstance(tasks, list) and any(isinstance(t, dict) and t.get("resume_session_id") for t in tasks)
+
+
+def _release_plans(resume_plans: dict[int, ResumePlan]) -> None:
+    for plan in resume_plans.values():
+        release_resume(plan.session_id)
+
+
+def _plan_resumes(task_list: list[dict[str, Any]], parent_agent) -> tuple[dict[int, ResumePlan], Optional[str]]:
+    """Validate and claim every task that names ``resume_session_id``; all-or-nothing, so a refused resume never
+    leaves a sibling claimed. Returns ``({task_index: plan}, None)`` or ``({}, model-facing error)``."""
+    plans: dict[int, ResumePlan] = {}
+    for i, task in enumerate(task_list):
+        sid = task.get("resume_session_id")
+        if not sid:
+            continue
+        try:
+            plan = prepare_resume(parent_agent, sid)
+        except ResumeError as exc:
+            _release_plans(plans)
+            return {}, str(exc)
+        if not claim_resume(plan.session_id):
+            _release_plans(plans)
+            return {}, f"Subagent session '{sid}' is already being resumed (this call or another); wait for its completion message."
+        plans[i] = plan
+    return plans, None
+
+
+def _dispatch_leased_task_list(
+    task_list, task_schemas, task_images, routes, refused, *, creds, top_role, max_children, default_max_iter, parent_agent,
+    background: bool, resume_plans: dict[int, ResumePlan], lease, n_runnable: int, context: Optional[str] = None,
+) -> str:
+    """Budget, live transcripts, child construction and dispatch for a validated, admitted task list."""
+    err = _oneshot_spawn_budget(parent_agent, n_runnable)
     if err:
         _release_plans(resume_plans)
         return tool_error(err)
@@ -706,7 +759,7 @@ def delegate_task(
     batch = _Batch(
         task_list, children, parent_agent, creds, context, top_role, max_children,
         live_deleg_id, live_writers, live_paths, *origin, overall_start,
-        live_home=_live_home, refused=refused,
+        live_home=_live_home, refused=refused, lease=lease,
     )
     return _run_batch(batch, background)
 
@@ -755,7 +808,9 @@ def _build_top_level_description(*, independent_completions=None) -> str:
         restrictions_rule = (
             "- Children cannot call clarify, memory, or cronjob.\n"
             f"- Children can themselves delegate while depth remains (max_spawn_depth={_get_max_spawn_depth()}); the "
-            "runtime derives this from depth automatically.\n"
+            "runtime derives this from depth automatically. Their children count toward the same "
+            f"max_total_children limit ({_get_max_total_children()}), so a nested call can be refused: do that work "
+            "inline instead.\n"
         )
     else:
         restrictions_rule = "- Children cannot call delegate_task, clarify, memory, or cronjob.\n"
@@ -814,11 +869,20 @@ def _build_tasks_param_description() -> str:
         max_children = _get_max_concurrent_children()
     except Exception:
         max_children = _DEFAULT_MAX_CONCURRENT_CHILDREN
+    try:
+        max_total = _get_max_total_children()
+    except Exception:
+        max_total = None
+    total_note = (
+        f" At most {max_total} subagents can be alive at once across all your delegations and their nested "
+        "delegations (delegation.max_total_children); a call that would exceed that is refused and starts nothing, "
+        "so do the work yourself or wait for running subagents to finish."
+    ) if max_total else ""
     return (
         f"The task(s), up to {max_children} in parallel for this user (set "
         "via delegation.max_concurrent_children). Each entry spawns one "
         "subagent with isolated context and terminal session; a single task "
-        "is a one-entry array. Required when spawning."
+        f"is a one-entry array.{total_note} Required when spawning."
     )
 
 def _build_dynamic_schema_overrides() -> dict:
