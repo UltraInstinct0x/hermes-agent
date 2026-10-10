@@ -66,6 +66,8 @@ def _unregister_subagent(subagent_id: str, *, agent: Any = None) -> None:
         if not sid:
             return
         _recent_subagents[sid] = {k: record.get(k) for k in ("goal", "delegation_id", "owner_agent_session_id")}
+        # Lets a steer that arrives after the child finished point at the session to resume (see steer_fallback).
+        _recent_subagents[sid]["child_session_id"] = str(getattr(record.get("agent"), "session_id", "") or "") or None
         while len(_recent_subagents) > _RECENT_SUBAGENTS_CAP:
             _recent_subagents.pop(next(iter(_recent_subagents)), None)
 
@@ -121,17 +123,44 @@ def _subagent_transport_matches(record, transport) -> bool:
     return bound is transport or (isinstance(bound, FanoutTransport) and bound.contains(transport))
 
 
+STEER_MODES = ("queue", "redirect")
+
+
+def steer_fallback(subagent_id: str, text: str) -> Optional[dict[str, Any]]:
+    """Machine-readable recovery for a steer that could not be delivered: ``{action: 'resume', resume_session_id,
+    goal}`` naming the child's session and carrying the SAME text, or None when the child's session is unknown.
+    The child's transcript is intact after it finishes, so resuming with the instruction is lossless. Works for a
+    live record that stopped accepting steers and for a recently finished child (``_recent_subagents``)."""
+    with _active_subagents_lock:
+        record = _active_subagents.get(subagent_id) or _recent_subagents.get(subagent_id)
+    if not record or not text or not text.strip():
+        return None
+    session_id = str(
+        getattr(record.get("agent"), "session_id", "") or record.get("child_session_id") or "") or None
+    if session_id is None:
+        return None
+    return {"action": "resume", "resume_session_id": session_id, "goal": text.strip()}
+
+
 def steer_subagent(
     subagent_id: str, text: str, *, owner_session_id: Optional[str] = None, owner_transport: Any = None,
-    owner_session_record: Any = None,
+    owner_session_record: Any = None, mode: str = "queue", lineage_owner: Any = None,
 ) -> bool:
     """Queue steering text into a running subagent without stopping it.
 
-    AIAgent.steer() appends the text to the child's last tool result at its next iteration boundary — the current tool
-    call is never cut. True iff the text was QUEUED while the child still accepted work; False for unknown/closed id,
-    ownership mismatch, no live agent, or empty text. ``owner_session_id=None`` keeps the in-process helper contract;
-    gateway callers must pass exact authority. Acceptance and completion are linearized by the registry lock: if
-    acceptance wins but no delivery boundary remains, the text lands in the entry as ``missed_steer``.
+    ``mode='queue'`` (default): AIAgent.steer() appends the text to the child's last tool result at its next
+    iteration boundary — the current tool call is never cut. ``mode='redirect'``: AIAgent.redirect() additionally
+    cancels the in-flight MODEL request and appends the text as a real user message so the correction takes effect
+    now; during tool execution it degrades to queue, and if no turn is live it falls back to queue. True iff the
+    text was QUEUED/APPLIED while the child still accepted work; False for unknown/closed id, ownership mismatch,
+    no live agent, or empty text. ``owner_session_id=None`` keeps the in-process helper contract; gateway callers
+    must pass exact authority — the exact generation (session id + transport + session record) recorded at spawn —
+    and MAY pass ``lineage_owner``: the live agent of the caller's session. When the exact generation no longer
+    matches (a Desktop reconnect re-creates the UI session id and record, #114909), a caller whose own transport was
+    already proven attached to that live session is still accepted iff this child belongs to that session's
+    conversation by durable lineage (``_owns_subagent_record``); an unrelated session never matches. Acceptance and
+    completion are linearized by the registry lock: if acceptance wins but no delivery boundary remains, the text
+    lands in the entry as ``missed_steer``.
     """
     if not text or not text.strip():
         return False
@@ -146,11 +175,16 @@ def steer_subagent(
             or owner_session_record is None
             or record.get("owner_session_record") is not owner_session_record
         ):
-            return False
+            if not (lineage_owner is not None and owner_transport is not None and owner_session_record is not None
+                    and _owns_subagent_record(record, lineage_owner)):
+                return False
         agent = record.get("agent")
         if agent is None:
             return False
         try:
+            if mode == "redirect":
+                redirect = getattr(agent, "redirect", None)
+                return bool((callable(redirect) and redirect(text)) or agent.steer(text))
             return bool(agent.steer(text))
         except Exception as exc:
             logger.debug("steer_subagent(%s) failed: %s", subagent_id, exc)
@@ -270,7 +304,9 @@ def _list_payload(parent_agent: Any) -> dict[str, Any]:
         )
     return payload
 
-def _handle_control_action(action: str, subagent_id: Optional[str], message: Optional[str], parent_agent: Any) -> str:
+def _handle_control_action(
+    action: str, subagent_id: Optional[str], message: Optional[str], parent_agent: Any, mode: Optional[str] = None,
+) -> str:
     """Synchronous control plane for delegate_task: list/steer/stop. Runs in-turn (never backgrounded) over the same
     registry the TUI overlay drives, scoped so a conversation can only control its own spawn tree."""
     if action == "list":
@@ -280,23 +316,38 @@ def _handle_control_action(action: str, subagent_id: Optional[str], message: Opt
     sid = (subagent_id or "").strip()
     if not sid:
         return tool_error(f"action='{action}' requires subagent_id (from the spawn dispatch response or action='list').")
+    steer_mode = (mode or "queue").strip().lower()
+    if action == "steer" and steer_mode not in STEER_MODES:
+        return tool_error(f"Unknown steer mode '{mode}'. Use 'queue' (default) or 'redirect'.")
     with _active_subagents_lock:
         record = _active_subagents.get(sid)
+        recent = _recent_subagents.get(sid)
+    if action == "steer" and not (message or "").strip():
+        return tool_error("action='steer' requires a non-empty 'message' describing the course correction.")
     if record is None or not _owns_subagent_record(record, parent_agent):
+        if action == "steer" and record is None and recent and _owns_subagent_record(
+                {"owner_agent_session_id": recent.get("owner_agent_session_id")}, parent_agent):
+            # Finished child of this conversation: its session is intact, so hand back the lossless recovery.
+            return tool_error(
+                f"Subagent '{sid}' already finished, so the steer was not delivered. Its session is intact: apply "
+                "the instruction by resuming it (see fallback).", fallback=steer_fallback(sid, message))
         return tool_error(
             f"No live subagent '{sid}' in this conversation's spawn tree. It "
             "may have already finished (its result arrives as a normal "
             "completion message). Use action='list' to see live children."
         )
-    if action == "steer" and not (message or "").strip():
-        return tool_error("action='steer' requires a non-empty 'message' describing the course correction.")
     outcome = _CONTROL_OUTCOMES.get(action)
     if outcome is None:
         return tool_error(f"Unknown action '{action}'. Use spawn, list, steer, or stop.")
     status, note, failure = outcome
-    ok = interrupt_subagent(sid) if action == "stop" else steer_subagent(sid, message.strip())
+    ok = interrupt_subagent(sid) if action == "stop" else steer_subagent(sid, message.strip(), mode=steer_mode)
     if ok:
-        return json.dumps({"action": action, "subagent_id": sid, "status": status, "note": note}, ensure_ascii=False)
+        payload = {"action": action, "subagent_id": sid, "status": status, "note": note}
+        if action == "steer":
+            payload["mode"] = steer_mode
+        return json.dumps(payload, ensure_ascii=False)
+    if action == "steer":
+        return tool_error(failure.format(sid=sid), fallback=steer_fallback(sid, message))
     return tool_error(failure.format(sid=sid))
 
 # action -> (success status, success note, failure error template)

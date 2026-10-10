@@ -421,6 +421,7 @@ class TestSubagentSteerRPC:
                 "status": "queued",
                 "subagent_id": "sid-rpc-2",
                 "text": "check the edge cases",
+                "mode": "queue",  # the delivery mode used, queue by default
             }
             assert agent.steered == ["check the edge cases"]
         finally:
