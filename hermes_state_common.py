@@ -79,6 +79,8 @@ def _sql_literal(text: str) -> str:
 # is exactly what distinguishes a never-drained accept row from a dispatched-then-interrupted
 # turn's row (which #123532 deliberately keeps active).
 QUEUED_PROMPT_METADATA_KEY = "_queued_prompt"
+# Bot Chat row a cron job posts WITHOUT starting an agent turn (cron.bot_chat_delivery_mode: notice).
+CRON_NOTICE_DISPLAY_KIND = "cron_notice"
 
 
 def _sql_json_extract(expression: str, path: str) -> str:

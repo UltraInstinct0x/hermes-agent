@@ -605,7 +605,8 @@ def _resolve_single_delivery_target(
     # Must precede the generic platform:chat_id split so the profile name isn't parsed as chat_id.
     bot_chat_profile = parse_bot_chat_deliver_token(deliver_value)
     if bot_chat_profile is not None:
-        return _resolve_bot_chat_target(job, bot_chat_profile)
+        return _resolve_bot_chat_target(
+            job, bot_chat_profile, parse_bot_chat_deliver_mode(deliver_value) or "")
 
     if deliver_value == "origin":
         if origin:
@@ -709,7 +710,7 @@ def bot_chat_message(job: dict, content: str) -> str:
 
 
 def _deliver_to_bot_chat(job: dict, content: str, profile: str, *,
-                         for_failure: bool = False) -> Optional[str]:
+                         for_failure: bool = False, mode: str = "turn") -> Optional[str]:
     """Admit job output to the target profile's authority as a real inbound Bot Chat turn.
 
     None means the target's durable receipt is settled (or a failure notice was recorded as
@@ -718,11 +719,15 @@ def _deliver_to_bot_chat(job: dict, content: str, profile: str, *,
     admission as delivery. ``profile`` is ``""`` for the job's own profile. There is no
     second-writer fallback: a target whose authority is not ready gets the payload parked under
     the same delivery id (``cron.bot_chat_legacy.defer``) and admitted by a later tick.
+
+    ``mode="notice"`` posts the output as a ``cron_notice`` row instead (no inbound turn, no model
+    call); see ``cron.bot_chat_notice``.
     """
     import hashlib
     import json
     import uuid
     from hermes_constants import get_hermes_home
+    from cron.bot_chat_notice import deliver_bot_chat_notice
     from hermes_cli.profiles import get_profile_dir
     from tools.bot_live_delivery import (
         deliver_to_live_owner, find_canonical_live_owner, read_delivery_result,
@@ -748,6 +753,10 @@ def _deliver_to_bot_chat(job: dict, content: str, profile: str, *,
             [str(source_home), job_id, str(run_id), str(home)],
             ensure_ascii=False, separators=(",", ":"),
         ).encode("utf-8")).hexdigest()
+        if mode == "notice":
+            return deliver_bot_chat_notice(
+                job, content, home, key, f"bot-chat:{profile_label}",
+                for_failure=for_failure, suppressed=suppress_notification)
         # Read BEFORE discovery: the previous owner may have exited after accepting.
         receipt = read_delivery_result(home, key)
         target = f"bot-chat:{profile_label}"
@@ -812,10 +821,26 @@ BOT_CHAT_PLATFORM = "bot-chat"
 BOT_CHAT_POLICY_PLATFORM = "tui"
 
 
+# How a bot-chat delivery reaches the chat. ``turn`` (default, upstream behaviour): the output is
+# injected as a user-role message and the bot runs a full agent turn on it. ``notice``: the output is
+# posted as a ``cron_notice`` row (assistant role, no agent turn, no model call).
+BOT_CHAT_MODE_TURN = "turn"
+BOT_CHAT_MODE_NOTICE = "notice"
+_BOT_CHAT_MODES = (BOT_CHAT_MODE_TURN, BOT_CHAT_MODE_NOTICE)
+_BOT_CHAT_MODE_SEPARATOR = "+"  # profile names never contain it, so ``bot-chat:research+notice`` is unambiguous
+
+
+def _split_bot_chat_mode(raw: str) -> tuple[str, str]:
+    """``"bot-chat:research+notice"`` -> ``("bot-chat:research", "notice")``; no suffix -> mode ``""``."""
+    head, sep, mode = raw.partition(_BOT_CHAT_MODE_SEPARATOR)
+    return (head.strip(), mode.strip().lower()) if sep else (raw.strip(), "")
+
+
 def parse_bot_chat_deliver_token(part: str) -> Optional[str]:
-    """``bot-chat[:<name>]`` → ``""`` (own profile), the name, or ``None`` if not a bot-chat
-    token. Token is case-insensitive; the name is normalized later by the profile layer."""
-    raw = (part or "").strip()
+    """``bot-chat[:<name>][+<mode>]`` -> ``""`` (own profile), the name, or ``None`` if not a bot-chat
+    token. Token is case-insensitive; the name is normalized later by the profile layer. The optional
+    ``+turn`` / ``+notice`` suffix is read by :func:`parse_bot_chat_deliver_mode`, never part of the name."""
+    raw, _mode = _split_bot_chat_mode(part or "")
     lowered = raw.lower()
     if lowered == BOT_CHAT_PLATFORM:
         return ""
@@ -825,12 +850,45 @@ def parse_bot_chat_deliver_token(part: str) -> Optional[str]:
     return None
 
 
-def _resolve_bot_chat_target(job: dict, profile_arg: str) -> Optional[dict]:
+def parse_bot_chat_deliver_mode(part: str) -> Optional[str]:
+    """The explicit ``+<mode>`` of a bot-chat token: ``"turn"``, ``"notice"``, ``""`` when the token has no
+    suffix, or the unrecognized suffix verbatim (callers reject it). ``None`` if not a bot-chat token."""
+    if parse_bot_chat_deliver_token(part) is None:
+        return None
+    return _split_bot_chat_mode(part or "")[1]
+
+
+def _bot_chat_delivery_mode(job: dict, token_mode: str = "") -> str:
+    """Effective mode: token suffix, else the job's ``bot_chat_delivery_mode``, else
+    ``cron.bot_chat_delivery_mode`` from config, else ``turn``. An unknown value never silently becomes
+    the no-turn lane: it logs and falls back to ``turn``."""
+    candidates = [token_mode, str(job.get("bot_chat_delivery_mode") or "")]
+    if not any(c.strip() for c in candidates):
+        try:
+            cfg = _sched.load_config()
+            candidates.append(str((cfg.get("cron") or {}).get("bot_chat_delivery_mode") or ""))
+        except Exception:
+            pass
+    for candidate in candidates:
+        mode = candidate.strip().lower()
+        if not mode:
+            continue
+        if mode in _BOT_CHAT_MODES:
+            return mode
+        logger.warning("Job '%s': unknown bot-chat delivery mode '%s'; using '%s'",
+                       job.get("id", "?"), mode, BOT_CHAT_MODE_TURN)
+        return BOT_CHAT_MODE_TURN
+    return BOT_CHAT_MODE_TURN
+
+
+def _resolve_bot_chat_target(job: dict, profile_arg: str, token_mode: str = "") -> Optional[dict]:
     """Resolve a bot-chat token to a delivery target. ``""`` = own profile (no ``-p`` needed);
     otherwise the profile must exist locally — cross-machine delivery is intentionally unsupported
-    so same-named profiles on other gateways can never be targeted by accident."""
+    so same-named profiles on other gateways can never be targeted by accident. The target carries the
+    resolved delivery ``mode`` (see :func:`_bot_chat_delivery_mode`)."""
+    mode = _bot_chat_delivery_mode(job, token_mode)
     if not profile_arg:
-        return {"platform": BOT_CHAT_PLATFORM, "chat_id": "", "thread_id": None}
+        return {"platform": BOT_CHAT_PLATFORM, "chat_id": "", "thread_id": None, "mode": mode}
     try:
         from hermes_cli.profiles import normalize_profile_name, profile_exists
         canon = normalize_profile_name(profile_arg)
@@ -840,7 +898,7 @@ def _resolve_bot_chat_target(job: dict, profile_arg: str) -> Optional[dict]:
                 "machine — skipping target",
                 job.get("id", "?"), profile_arg)
             return None
-        return {"platform": BOT_CHAT_PLATFORM, "chat_id": canon, "thread_id": None}
+        return {"platform": BOT_CHAT_PLATFORM, "chat_id": canon, "thread_id": None, "mode": mode}
     except Exception:
         logger.warning(
             "Job '%s': failed to resolve bot-chat profile '%s'", job.get("id", "?"), profile_arg,
@@ -1882,7 +1940,9 @@ def _deliver_result(
             continue
         # Bot Chat owns admission; never concurrently resume a live owner's transcript.
         if target["platform"] == BOT_CHAT_PLATFORM:
-            bot_chat_error = _deliver_to_bot_chat(job, content, target["chat_id"], for_failure=for_failure)
+            bot_chat_error = _deliver_to_bot_chat(
+                job, content, target["chat_id"], for_failure=for_failure,
+                mode=target.get("mode") or BOT_CHAT_MODE_TURN)
             suppressed_targets += job.pop("_notification_all_targets_suppressed", False)
             if bot_chat_error:
                 receipt_target = f"bot-chat:{target['chat_id'] or '(own)'}"
