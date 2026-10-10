@@ -326,6 +326,8 @@ class _ChildProgressRelay:
             if self.session_ref.get(src):
                 kw[dst] = str(self.session_ref[src])
         kw["tool_count"] = self.tool_count
+        if self.session_ref.get("resumed"):
+            kw["resumed"] = True  # a continued child: same child_session_id as its earlier run
         return kw
 
     def _relay(self, event_type: str, tool_name: str | None = None, preview: str | None = None, args=None, **kwargs):

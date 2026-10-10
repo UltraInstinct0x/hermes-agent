@@ -259,6 +259,15 @@ def _list_payload(parent_agent: Any) -> dict[str, Any]:
             "have delivered (or will deliver) their results as normal "
             "completion messages — there is nothing to steer or stop."
         )
+    from tools.delegate_tool_resume import finished_children, resume_window_hours
+    finished = finished_children(parent_agent)
+    if finished:
+        payload["finished"] = finished
+        payload["finished_note"] = (
+            f"Children of this conversation finished within the last {resume_window_hours():g}h, newest first. If the "
+            "user's request builds on one of them, continue it instead of spawning a new subagent: "
+            "delegate_task(action='resume', resume_session_id=<child_session_id>, goal=<the follow-up>)."
+        )
     return payload
 
 def _handle_control_action(action: str, subagent_id: Optional[str], message: Optional[str], parent_agent: Any) -> str:
