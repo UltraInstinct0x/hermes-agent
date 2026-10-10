@@ -240,7 +240,10 @@ def _format_batch_delegation(evt: dict, deleg_id: str, completed_at: float) -> s
         header = (f"--- {icon} TASK {idx + 1}/{n}" + (f": {r_goal}" if r_goal else "") + f"  (status={r_status}"
                   + (f", api_calls={r['api_calls']}" if r.get("api_calls") else "")
                   + (f", {r['duration_seconds']}s" if r.get("duration_seconds") is not None else "")
-                  + (", TRUNCATED: hit max_iterations — work may be incomplete" if r_truncated else ""))
+                  + (", TRUNCATED: hit max_iterations — work may be incomplete" if r_truncated else "")
+                  # Appended last so the earlier fields keep their positions for anything that parses the header.
+                  + (f", child_session_id={r['child_session_id']}" if r.get("child_session_id") else "")
+                  + (", resumed" if r.get("resumed") else ""))
         lines += ["", header + ") ---"]
         if r_status in _DONE and r_summary:
             if r_truncated:
@@ -255,6 +258,9 @@ def _format_batch_delegation(evt: dict, deleg_id: str, completed_at: float) -> s
         if r.get("live_transcript"):
             lines.append(f"Full live transcript (complete tool/assistant trace): {r['live_transcript']}")
         lines += _process_accounting_lines(r)
+    if any(r.get("child_session_id") for r in results):
+        lines += ["", "To build on a task above (same topic, a follow-up), continue that subagent instead of spawning a new "
+                  "one: delegate_task(action='resume', resume_session_id=<its child_session_id>, goal=<the follow-up>)."]
     return "\n".join(lines)
 
 

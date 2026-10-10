@@ -365,6 +365,9 @@ def _dispatched_payload(batch: _Batch, units: list[tuple[_Batch, str]]) -> dict:
             {"delegation_id": uid, "group": unit.group, "task_indexes": [i for (i, _, _) in unit.children]}
             for unit, uid in units
         ]
+    child_sessions = [getattr(c, "session_id", None) for (_, _, c) in batch.children]
+    if any(isinstance(s, str) and s for s in child_sessions):
+        payload["child_session_ids"] = child_sessions  # what action='resume' takes once a child has finished
     sids = [getattr(c, "_subagent_id", None) for (_, _, c) in batch.children]
     if any(isinstance(s, str) and s for s in sids):
         payload["subagent_ids"] = sids

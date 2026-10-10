@@ -54,6 +54,9 @@ from tools.delegate_tool_tuning import pin_child_service_tier
 from tools.delegate_tool_toolsets import (
     DELEGATE_BLOCKED_TOOLS, _expand_parent_toolsets, _resolve_child_toolsets, _strip_blocked_tools,
 )
+from tools.delegate_tool_resume import (
+    ResumeError, ResumePlan, claim_resume, finished_children, prepare_resume, release_resume,
+)
 from tools.delegate_tool_results import (
     _apply_summary_budget, _build_child_preserving_parent_tools, _run_child_lifecycle, _summarize_tool_arguments,
 )
@@ -230,6 +233,8 @@ def _build_child_agent(
     override_reasoning_effort: Any = None,
     profile_home: Optional[Path] = None,
     override_service_tier: Optional[str] = None,  # a route's checked speed tier (tools/delegate_tool_tuning.py)
+    # A validated ResumePlan: continue that FINISHED child's own session instead of starting a fresh one.
+    resume_plan: Optional[ResumePlan] = None,
 ):
     """Build (don't run) a child AIAgent on the main thread. override_* (from delegation config) replace parent
     inheritance so children can run on a different provider:model pair. ``profile_home`` builds (and later runs,
@@ -265,6 +270,8 @@ def _build_child_agent(
     # Shared ref: session_id once the child exists, delegation_id once
     # delegate_task stamps it — both ride on every relayed event.
     child_session_ref: dict[str, Any] = {}
+    if resume_plan is not None:
+        child_session_ref["resumed"] = True  # rides every relayed subagent.* frame
     child_progress_cb = _build_child_progress_callback(
         task_index, goal, parent_agent, task_count, subagent_id=subagent_id, parent_id=parent_subagent_id,
         depth=max(0, child_depth - 1),  # 0 = first-level child for the UI
@@ -301,7 +308,12 @@ def _build_child_agent(
                         if child_progress_cb else None
                     ),
                     session_db=child_session_db, parent_session_id=parent_sid, request_overrides=request_overrides,
-                    session_id=getattr(child_session_db, "reserved_session_id", None),
+                    # Resume takes precedence: continue the finished child's own session. Otherwise, in Kanban workers,
+                    # use the owner-reserved session id so the child's row stays under the parent's store.
+                    session_id=(
+                        resume_plan.session_id if resume_plan is not None
+                        else getattr(child_session_db, "reserved_session_id", None)
+                    ),
                     tool_progress_callback=child_progress_cb,
                     iteration_budget=None,  # fresh budget per subagent
                     # A profile route carries that profile's identity (its SOUL.md under the bound home).
@@ -329,6 +341,13 @@ def _build_child_agent(
     child_session_ref["session_id"] = getattr(child, "session_id", "") or ""
     child._progress_identity_ref = child_session_ref
     child._delegate_depth, child._delegate_role = child_depth, effective_role  # post-degrade role
+    if resume_plan is not None:
+        # The stored transcript becomes the child's history for its next turn (see _ChildRun.await_child); the
+        # follow-up goal is that turn's user message. The marker keeps the original "Subagent: <goal>" title.
+        child._resume_history, child._delegate_resumed, child._resume_claim = resume_plan.history, True, resume_plan.session_id
+        if child_session_db is not None:
+            with _quiet("subagent: reopen of resumed child session failed", exc_info=True):
+                child_session_db.reopen_session(resume_plan.session_id)
     child._subagent_id, child._parent_subagent_id = subagent_id, parent_subagent_id
     _apply_child_compression_cap(child, delegation_cfg)
     # Ownership chain for action=list/steer/stop; weakref so a finished parent
@@ -450,6 +469,7 @@ def _build_children(
     task_list: list[dict[str, Any]], task_schemas: list[Optional[dict[str, Any]]], routes: list[Any], *,
     top_role: str, max_iterations: int, parent_agent,
     live_deleg_id: Optional[str], live_writers: list, task_images: Optional[list[Optional[list[str]]]] = None,
+    resume_plans: Optional[dict[int, ResumePlan]] = None,
 ) -> tuple[list[tuple], Optional[str]]:
     """Build every child on the main thread (construction is not thread-safe), each on its task's route;
     ``(children, None)`` or ``([], error)`` on an explicit-pin preflight failure."""
@@ -469,7 +489,8 @@ def _build_children(
                 task_index=i, goal=t["goal"], context=_child_context,
                 toolsets=None,  # always inherit the parent's toolsets
                 model=route.creds["model"], max_iterations=max_iterations, task_count=len(task_list),
-                parent_agent=parent_agent, role=_normalize_role(t.get("role") or top_role), **_route_overrides(route),
+                parent_agent=parent_agent, role=_normalize_role(t.get("role") or top_role),
+                resume_plan=(resume_plans or {}).get(i), **_route_overrides(route),
             )
         except ValueError as exc:
             # An owner refusal can land mid-batch: the siblings built so far hold reservations.
@@ -553,20 +574,28 @@ def delegate_task(
     max_iterations: Optional[int] = None, role: Optional[str] = None, background: Optional[bool] = None,
     output_schema: Optional[dict[str, Any]] = None, images: Optional[list[str]] = None, action: Optional[str] = None,
     subagent_id: Optional[str] = None, message: Optional[str] = None, parent_agent=None,
-    credentials_cfg: Optional[dict[str, Any]] = None,
+    credentials_cfg: Optional[dict[str, Any]] = None, resume_session_id: Optional[str] = None,
 ) -> str:
     """Spawn child agents (single ``goal`` or ``tasks=[...]`` batch) or control running ones. ``action``
     list/steer/stop run synchronously and bypass the pause gate, depth limit and async dispatch. ``role`` is legacy
-    (per-task beats top-level; capability is depth-derived). Returns JSON with one results entry per task, or a
-    dispatch handle when running in the background."""
+    (per-task beats top-level; capability is depth-derived). ``action='resume'`` (or ``resume_session_id`` /
+    per-task ``resume_session_id``) continues a FINISHED child on its own session with ``goal`` as the follow-up
+    turn. Returns JSON with one results entry per task, or a dispatch handle when running in the background."""
     if parent_agent is None:
         return tool_error("delegate_task requires a parent agent context.")
 
     normalized_action = (action or "").strip().lower()
     if normalized_action in _CONTROL_ACTIONS:
         return _handle_control_action(normalized_action, subagent_id, message, parent_agent)
-    if normalized_action and normalized_action != "spawn":
-        return tool_error(f"Unknown action '{action}'. Use spawn (default), list, steer, or stop.")
+    if normalized_action and normalized_action not in ("spawn", "resume"):
+        return tool_error(f"Unknown action '{action}'. Use spawn (default), resume, list, steer, or stop.")
+    resume_session_id = (str(resume_session_id).strip() if resume_session_id else "") or None
+    if normalized_action == "resume" and not resume_session_id and not _tasks_name_a_resume(tasks):
+        return tool_error(
+            "action='resume' requires resume_session_id (a child_session_id from a completion message or "
+            "action='list') and goal (the follow-up for that child).")
+    if resume_session_id and tasks:
+        return tool_error("Pass resume_session_id with a top-level goal, or put resume_session_id inside the task entry, not both.")
 
     # Operator kill switch (TUI / delegation.pause RPC): blocks NEW spawns only.
     if is_spawn_paused():
@@ -612,17 +641,74 @@ def delegate_task(
         routes, err = _routes_for(task_list, cfg, credentials_cfg, parent_agent)
     if err:
         return tool_error(err)
+    if resume_session_id:
+        task_list[0]["resume_session_id"] = resume_session_id
+    resume_plans, err = _plan_resumes(task_list, parent_agent)
+    if err:
+        return tool_error(err)
+    try:
+        return _dispatch_task_list(
+            task_list, task_schemas, task_images, routes=routes, top_role=top_role,
+            max_children=max_children, default_max_iter=default_max_iter, parent_agent=parent_agent,
+            background=background, resume_plans=resume_plans, context=context,
+        )
+    except BaseException:
+        _release_plans(resume_plans)
+        raise
+
+
+def _tasks_name_a_resume(tasks: Any) -> bool:
+    return isinstance(tasks, list) and any(isinstance(t, dict) and t.get("resume_session_id") for t in tasks)
+
+
+def _release_plans(resume_plans: dict[int, ResumePlan]) -> None:
+    for plan in resume_plans.values():
+        release_resume(plan.session_id)
+
+
+def _plan_resumes(task_list: list[dict[str, Any]], parent_agent) -> tuple[dict[int, ResumePlan], Optional[str]]:
+    """Validate and claim every task that names ``resume_session_id``; all-or-nothing, so a refused resume never
+    leaves a sibling claimed. Returns ``({task_index: plan}, None)`` or ``({}, model-facing error)``."""
+    plans: dict[int, ResumePlan] = {}
+    for i, task in enumerate(task_list):
+        sid = task.get("resume_session_id")
+        if not sid:
+            continue
+        try:
+            plan = prepare_resume(parent_agent, sid)
+        except ResumeError as exc:
+            _release_plans(plans)
+            return {}, str(exc)
+        if not claim_resume(plan.session_id):
+            _release_plans(plans)
+            return {}, f"Subagent session '{sid}' is already being resumed (this call or another); wait for its completion message."
+        plans[i] = plan
+    return plans, None
+
+
+def _dispatch_task_list(
+    task_list, task_schemas, task_images, *, routes, top_role, max_children, default_max_iter, parent_agent,
+    background: bool, resume_plans: dict[int, ResumePlan], context: Optional[str] = None,
+) -> str:
+    """Fail-closed route settling, budget, live transcripts, child construction and dispatch for a validated task list."""
     # Fail closed per task: a task its backend cannot route is refused alone (its entry carries the error); the call
     # is a tool error only when no task can run.
     runnable = [r for r in routes if not r.error]
     if not runnable:
+        _release_plans(resume_plans)
         return tool_error(" ".join(dict.fromkeys(r.error for r in routes)))
     refused = [r.refused_entry(i) for i, r in enumerate(routes) if r.error]
+    # A refused task builds no child, so no run cleanup will ever release a resume it claimed: drop those claims now.
+    for _entry in refused:
+        _plan = resume_plans.pop(_entry["task_index"], None)
+        if _plan is not None:
+            release_resume(_plan.session_id)
     # Batch-level model/provider labels (transcript headers, completion block): blank when tasks took different
     # routes, so each child reports what it actually runs on.
     creds = runnable[0].creds if all(r.creds == runnable[0].creds for r in runnable) else dict.fromkeys(runnable[0].creds)
     err = _oneshot_spawn_budget(parent_agent, len(runnable))
     if err:
+        _release_plans(resume_plans)
         return tool_error(err)
 
     overall_start = time.monotonic()
@@ -653,8 +739,10 @@ def delegate_task(
     children, err = _build_children(
         task_list, task_schemas, routes, top_role=top_role, max_iterations=default_max_iter, parent_agent=parent_agent,
         live_deleg_id=live_deleg_id, live_writers=live_writers, task_images=task_images,
+        resume_plans=resume_plans,
     )
     if err:
+        _release_plans(resume_plans)
         return tool_error(err)
     batch = _Batch(
         task_list, children, parent_agent, creds, context, top_role, max_children,
@@ -703,7 +791,11 @@ _DESCRIPTION_HEAD = (
     "as a new message when subagents finish ({delivery}). Background results are delivered only "
     "BETWEEN your turns: finish whatever does not depend on them, then give a one-line status and END YOUR TURN. Never "
     "wait or poll on transcripts, artifact files, or CI for a child. "
-    "While children run, `action` (list/steer/stop) controls them live.\n\n"
+    "While children run, `action` (list/steer/stop) controls them live.\n"
+    "FOLLOW-UP ON FINISHED WORK: when the user's next request builds on what a subagent already did (same topic, "
+    "'turn that into...', 'now also...'), do NOT spawn a new one: find it (completion messages and action='list' show "
+    "child_session_id) and call action='resume' with resume_session_id and goal=<the follow-up>. The child continues "
+    "with its whole earlier research and tool results instead of starting cold. Spawn fresh only for unrelated work.\n\n"
     "USE FOR: reasoning-heavy subtasks, work that would flood your context, or independent parallel workstreams.\n"
     "DO NOT USE FOR (use these instead):\n"
     "- Mechanical multi-step work with no reasoning needed -> execute_code\n"
@@ -834,13 +926,21 @@ DELEGATE_TASK_SCHEMA = {
             # delegations always run in the background. Unadvertised; do not re-add.
             "action": _p(
                 "string",
-                "Default 'spawn'. Live control of running children: "
-                "'list' = ids/goals/status/transcripts; 'steer' = queue "
+                "Default 'spawn'. 'resume' = continue a FINISHED child with a follow-up (resume_session_id + goal): "
+                "it keeps its whole earlier context, so use it instead of spawning anew when the request builds on "
+                "that child's work. Live control of running children: "
+                "'list' = ids/goals/status/transcripts of running children PLUS children finished in the last "
+                "day (child_session_id, goal, finished_at) that can be resumed; 'steer' = queue "
                 "course-correction text into one child (subagent_id + "
                 "message) without stopping it; 'stop' = end one child "
                 "early (subagent_id; partial result still returns). "
-                "Control actions return immediately; goal/tasks are ignored unless spawning.",
-                enum=["spawn", "list", "steer", "stop"],
+                "Control actions return immediately; goal/tasks are ignored unless spawning or resuming.",
+                enum=["spawn", "resume", "list", "steer", "stop"],
+            ),
+            "resume_session_id": _p(
+                "string",
+                "For action='resume': the child_session_id of a finished child (shown in its completion message and "
+                "in action='list'). `goal` is then the follow-up instruction for that child, not a self-contained task.",
             ),
             "subagent_id": _p("string", "Target for action='steer'/'stop' (ids from the spawn response or action='list')."),
             "message": _p(
@@ -883,7 +983,7 @@ registry.register(
         max_iterations=args.get("max_iterations"), role=args.get("role"),
         background=_model_background_value(args, kw.get("parent_agent")), output_schema=args.get("output_schema"),
         images=args.get("images"), action=args.get("action"), subagent_id=args.get("subagent_id"), message=args.get("message"),
-        parent_agent=kw.get("parent_agent"),
+        resume_session_id=args.get("resume_session_id"), parent_agent=kw.get("parent_agent"),
     ),
     check_fn=check_delegate_requirements,
     emoji="🔀",
