@@ -649,6 +649,7 @@ class SubagentSnapshot(Result):
     tool_count: int | None = None
     last_tool: str | None = None
     accepting_steer: bool | None = None
+    child_session_id: str | None = None  # the child agent's durable session id (same value the subagent.* frames carry)
 
 
 class FailedDelegation(Result):

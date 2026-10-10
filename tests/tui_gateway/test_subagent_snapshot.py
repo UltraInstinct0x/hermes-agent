@@ -87,6 +87,25 @@ def test_snapshot_projects_only_this_sessions_runtime_records(runtime):
         assert finished.wait(10)
 
 
+def test_snapshot_carries_child_session_id_or_null(runtime):
+    from tools.delegate_tool_child_run import _register_child
+    from tools.delegate_tool_registry import _unregister_subagent
+
+    server, owner, transport, call = runtime
+    with_session = SimpleNamespace(_subagent_id="with-sid", _delegate_depth=1, model="test", session_id="child-session-1")
+    without_session = SimpleNamespace(_subagent_id="no-sid", _delegate_depth=1, model="test")
+    for child in (with_session, without_session):
+        _register_child(child, None, "goal", owner_session_id="ui-owner",
+                        owner_transport=transport, owner_session_record=owner)
+    try:
+        rows = {s["subagent_id"]: s for s in call("subagent.list")["result"]["subagents"]}
+        assert rows["with-sid"]["child_session_id"] == "child-session-1"
+        assert rows["no-sid"]["child_session_id"] is None
+    finally:
+        _unregister_subagent("with-sid")
+        _unregister_subagent("no-sid")
+
+
 def test_live_tail_and_steer_share_exact_owner_and_end_with_child(runtime):
     from run_agent import AIAgent
     from tools.delegate_tool_child_run import _register_child
