@@ -644,6 +644,49 @@ def _notif_handle_ready(sid, session, events, emitted, registry, fmt, deferred, 
     _notif_dispatch_completions(sid, session, completions, registry, deferred)
 
 
+def _apply_cron_notice(sid: str, session: dict, home, claimed: dict) -> None:
+    """Post a claimed ``kind="notice"`` envelope into the live Bot Chat without starting an agent turn.
+
+    Persists the ``cron_notice`` row, mirrors it into the warm in-memory history (flagged as already
+    persisted, so the next turn neither re-flushes nor forgets it), tells the attached client with
+    ``message.notice`` and settles the receipt. A write failure settles ``failed``: never replayed.
+    """
+    import time as _time
+    from agent.context_compressor import _DB_PERSISTED_MARKER
+    from agent.message_metadata import stamp_message_uid
+    from hermes_state_common import CRON_NOTICE_DISPLAY_KIND
+    from tools.bot_live_delivery import complete_delivery
+
+    delivery_id = str(claimed["id"])
+    text = str(claimed["message"])
+    metadata = dict(claimed.get("notice") or {})
+    metadata.setdefault("delivery_id", delivery_id)
+    try:
+        entry: dict = {"role": "assistant", "content": text, "display_kind": CRON_NOTICE_DISPLAY_KIND,
+                       "display_metadata": metadata, "timestamp": _time.time()}
+        agent = session.get("agent")
+        db = getattr(agent, "_session_db", None) if agent is not None else None
+        with (contextlib.nullcontext(db) if db is not None else _session_db(session)) as db:
+            if db is None:
+                raise RuntimeError("session database unavailable")
+            row_id, inserted = db.append_cron_notice(
+                _submit_row_target_key(session), text, metadata, message_uid=stamp_message_uid(entry))
+        if inserted:
+            entry.update(_row_id=row_id, **{_DB_PERSISTED_MARKER: True})
+            with session["history_lock"]:
+                session.setdefault("history", []).append(entry)
+                session["history_version"] = int(session.get("history_version", 0)) + 1
+            _emit("message.notice", sid, {
+                "row_id": row_id, "role": "assistant", "text": text,
+                "display_kind": CRON_NOTICE_DISPLAY_KIND, "display_metadata": metadata,
+                "timestamp": entry["timestamp"]})
+    except Exception as exc:
+        logger.warning("cron notice %s could not be posted into session %s", delivery_id, sid, exc_info=True)
+        complete_delivery(home, delivery_id, status="failed", error=f"{type(exc).__name__}: {exc}")
+        return
+    complete_delivery(home, delivery_id, status="settled")
+
+
 def _poll_bot_live_delivery_once(sid: str, session: dict) -> bool:
     """Run one durable envelope only after local FIFO/continuations yield the idle boundary."""
     from tools.bot_live_delivery import claim_pending_delivery, complete_delivery, find_canonical_live_owner, has_mailbox
@@ -672,6 +715,10 @@ def _poll_bot_live_delivery_once(sid: str, session: dict) -> bool:
         claimed = claim_pending_delivery(home, owner)
         if claimed is None:
             return False
+        if claimed.get("kind") == "notice":
+            # A cron notice is a posted row, not a turn: nothing to run, so the session stays idle.
+            _apply_cron_notice(sid, session, home, claimed)
+            return True
         session["running"] = True
 
     delivery_id = str(claimed["id"])

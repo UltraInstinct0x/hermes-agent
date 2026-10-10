@@ -57,16 +57,19 @@ def _records(root: Path) -> list[tuple[Path, dict]]:
 
 
 def defer(key: str, job: dict, content: str, profile: str, home: Path, *,
-          for_failure: bool = False, suppressed: bool = False, degraded: bool = False) -> dict:
+          for_failure: bool = False, suppressed: bool = False, degraded: bool = False,
+          mode: str = "turn") -> dict:
     """``degraded`` marks the short notice queued after a CLI-lane turn timed out; the record
-    carries it so the consumer recognizes the marker by the record, never by its text."""
+    carries it so the consumer recognizes the marker by the record, never by its text. ``mode="notice"`` is
+    recorded so the drain posts a notice row instead of running a turn."""
     root = _root()
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     with _FileLock(root / ".lock"):
         record = read_pending(key)
         if record is not None:
             if (record["content"] != content or record["home"] != str(home)
-                    or bool(record.get("for_failure")) != for_failure):
+                    or bool(record.get("for_failure")) != for_failure
+                    or record.get("mode", "turn") != mode):
                 raise ValueError("delivery id already belongs to a different payload")
             if suppressed and record["status"] == "queued":
                 record.update(status="suppressed", error=None)
@@ -79,6 +82,8 @@ def defer(key: str, job: dict, content: str, profile: str, home: Path, *,
             record["for_failure"] = True
         if degraded:
             record["degraded"] = True
+        if mode != "turn":
+            record["mode"] = mode
         atomic_json_write(root / f"{key}.json", record, fsync_dir=True, mode=0o600)
         return record
 
