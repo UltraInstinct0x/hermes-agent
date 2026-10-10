@@ -104,6 +104,28 @@ def test_local_work_blocks_mailbox_claim_without_consuming_envelope(monkeypatch,
     assert receipts[0][1]["reply"] == "reply"
 
 
+def test_notice_envelope_is_posted_not_run_as_a_turn(monkeypatch, tmp_path):
+    """A ``kind="notice"`` envelope never reaches ``_run_prompt_submit`` and never marks the session running."""
+    import tools.bot_live_delivery as mailbox
+    owner = {"lease_id": "lease", "live_session_id": "live", "session_id": "chat"}
+    claimed = {"id": "receipt", "message": "job output", "kind": "notice", "notice": {"delivery_id": "receipt"}}
+    monkeypatch.setattr(mailbox, "find_canonical_live_owner", lambda home: owner)
+    monkeypatch.setattr(mailbox, "claim_pending_delivery", lambda home, pinned: claimed)
+    applied, submitted = [], []
+    poll = rebind(session_notifications._poll_bot_live_delivery_once, {
+        "_session_home": lambda session: tmp_path,
+        "_session_turn_admission": _session_turn_admission,
+        "_run_prompt_submit": lambda *args, **kwargs: submitted.append(args) or True,
+        "_apply_cron_notice": lambda sid, session, home, record: applied.append((sid, home, record["id"])),
+    })
+    mailbox._root(tmp_path).mkdir(parents=True)
+    session = {"history_lock": threading.RLock(), "agent": object(), "session_key": "chat",
+               "active_session_lease": SimpleNamespace(lease_id="lease", released=False)}
+    assert poll("live", session) is True
+    assert applied == [("live", tmp_path, "receipt")] and not submitted
+    assert not session.get("running")
+
+
 def test_mailbox_poll_skips_owner_lookup_without_a_mailbox(monkeypatch, tmp_path):
     """No mailbox directory → no state.db open / registry lock per pass; the lookup runs once one exists."""
     import tools.bot_live_delivery as mailbox
