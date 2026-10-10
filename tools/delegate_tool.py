@@ -575,6 +575,7 @@ def delegate_task(
     output_schema: Optional[dict[str, Any]] = None, images: Optional[list[str]] = None, action: Optional[str] = None,
     subagent_id: Optional[str] = None, message: Optional[str] = None, parent_agent=None,
     credentials_cfg: Optional[dict[str, Any]] = None, resume_session_id: Optional[str] = None,
+    mode: Optional[str] = None,
 ) -> str:
     """Spawn child agents (single ``goal`` or ``tasks=[...]`` batch) or control running ones. ``action``
     list/steer/stop run synchronously and bypass the pause gate, depth limit and async dispatch. ``role`` is legacy
@@ -586,7 +587,7 @@ def delegate_task(
 
     normalized_action = (action or "").strip().lower()
     if normalized_action in _CONTROL_ACTIONS:
-        return _handle_control_action(normalized_action, subagent_id, message, parent_agent)
+        return _handle_control_action(normalized_action, subagent_id, message, parent_agent, mode)
     if normalized_action and normalized_action not in ("spawn", "resume"):
         return tool_error(f"Unknown action '{action}'. Use spawn (default), resume, list, steer, or stop.")
     resume_session_id = (str(resume_session_id).strip() if resume_session_id else "") or None
@@ -924,6 +925,14 @@ DELEGATE_TASK_SCHEMA = {
                 "Control actions return immediately; goal/tasks are ignored unless spawning or resuming.",
                 enum=["spawn", "resume", "list", "steer", "stop"],
             ),
+            "mode": _p(
+                "string",
+                "For action='steer': 'queue' (default) delivers the message at the child's next tool boundary; "
+                "'redirect' also cancels the child's in-flight model request so the correction applies NOW "
+                "(use it when the user changes their mind). A steer that cannot be delivered returns "
+                "`fallback` ({action:'resume', resume_session_id, goal}): call it to apply the same text to the child.",
+                enum=["queue", "redirect"],
+            ),
             "resume_session_id": _p(
                 "string",
                 "For action='resume': the child_session_id of a finished child (shown in its completion message and "
@@ -985,7 +994,7 @@ registry.register(
         max_iterations=args.get("max_iterations"), role=args.get("role"),
         background=_model_background_value(args, kw.get("parent_agent")), output_schema=args.get("output_schema"),
         images=args.get("images"), action=args.get("action"), subagent_id=args.get("subagent_id"), message=args.get("message"),
-        resume_session_id=args.get("resume_session_id"), parent_agent=kw.get("parent_agent"),
+        resume_session_id=args.get("resume_session_id"), mode=args.get("mode"), parent_agent=kw.get("parent_agent"),
     ),
     check_fn=check_delegate_requirements,
     emoji="🔀",
