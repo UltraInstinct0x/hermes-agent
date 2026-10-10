@@ -926,12 +926,12 @@
     },
     {
       "name": "display.thumbnail",
-      "summary": "One JPEG grab of the bot's screen; read-only, never changes the lease.",
+      "summary": "One JPEG grab of the bot's screen; read-only, never changes the lease. A client presenting the holder's viewer id keeps receiving frames while a human drives.",
       "params": [
         {
           "name": "params",
           "schema": {
-            "$ref": "#/components/schemas/ProfileParams"
+            "$ref": "#/components/schemas/DisplayThumbnailParams"
           }
         }
       ],
@@ -17825,6 +17825,37 @@
         "title": "DisplaySwitchSandboxImageResult",
         "type": "object"
       },
+      "DisplayThumbnailParams": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
+          "viewer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Viewer Id"
+          }
+        },
+        "title": "DisplayThumbnailParams",
+        "type": "object"
+      },
       "DisplayThumbnailResult": {
         "additionalProperties": false,
         "description": "``data_url`` is null while the screen is stopped or while a human holds the lease\n(``suppressed``): the frame may show what they are typing.",
@@ -23638,6 +23669,47 @@
           "already_streamed"
         ],
         "title": "MessageInterimPayload",
+        "type": "object"
+      },
+      "MessageNoticePayload": {
+        "additionalProperties": false,
+        "description": "``session_notifications._apply_cron_notice`` \u2014 a ``cron_notice`` row just persisted into the session\n(``cron.bot_chat_delivery_mode: notice``). Same keys the ``session.history`` projection carries.",
+        "properties": {
+          "row_id": {
+            "title": "Row Id",
+            "type": "integer"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "display_kind": {
+            "title": "Display Kind",
+            "type": "string"
+          },
+          "display_metadata": {
+            "additionalProperties": true,
+            "title": "Display Metadata",
+            "type": "object"
+          },
+          "timestamp": {
+            "title": "Timestamp",
+            "type": "number"
+          }
+        },
+        "required": [
+          "row_id",
+          "role",
+          "text",
+          "display_kind",
+          "display_metadata",
+          "timestamp"
+        ],
+        "title": "MessageNoticePayload",
         "type": "object"
       },
       "MessageReactParams": {
@@ -49157,6 +49229,18 @@
           "name": "payload",
           "schema": {
             "$ref": "#/components/schemas/MessageInterimPayload"
+          }
+        }
+      ]
+    },
+    {
+      "name": "message.notice",
+      "summary": "A cron job posted its output into this session as a notice row; paint it, no agent turn runs.",
+      "params": [
+        {
+          "name": "payload",
+          "schema": {
+            "$ref": "#/components/schemas/MessageNoticePayload"
           }
         }
       ]
