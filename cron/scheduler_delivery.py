@@ -865,6 +865,10 @@ def _deliver_to_bot_chat(job: dict, content: str, profile: str, *, deferred: Opt
                 "notification_category": "diagnostic" if for_failure else "result"}
         if mode == "notice" and deferred is None and not home.is_dir():
             return f"bot-chat delivery target no longer exists: {home}; do not resend"
+        # The only trace of which lane a run took: turn mode and notice mode otherwise log nothing until
+        # the final outcome line, which made a process running older code indistinguishable from a bug.
+        logger.info("Job '%s': Bot Chat delivery mode=%s profile=%s deferred=%s",
+                    job_id, mode, profile_label, deferred is not None)
         # Read BEFORE discovery: the previous owner may have exited after accepting.
         # No receipt state, including ambiguous/failed, authorizes a CLI replay.
         receipt = read_delivery_result(home, key)
