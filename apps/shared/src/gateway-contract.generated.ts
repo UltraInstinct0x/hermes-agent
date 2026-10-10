@@ -4536,6 +4536,12 @@ export interface PreviewActRequestParams {
   max?: number | null
   allow_shortcut?: boolean | null
 }
+/** ``tools/app_action_tool.py`` payload: one stable action id plus its args object. */
+export interface AppActionRequestParams {
+  session_id: string
+  action: string
+  args?: Record<string, unknown> | null
+}
 /** ``tools/tour_tool.py`` field set. */
 export interface TourRequestParams {
   session_id: string
@@ -5788,6 +5794,8 @@ export const RPC_METHODS = [
 
 // ── Server→client requests ──
 export interface ServerRequestMap {
+  /** Run one named UI action in the desktop app; answers with its JSON result. */
+  'app.action': { params: AppActionRequestParams; result: ValueResult }
   /** A dangerous command awaits the user's decision. */
   approval: { params: ApprovalRequestParams; result: ApprovalResult }
   /** The clarify tool: ask the user 1-5 questions. */
@@ -5818,6 +5826,7 @@ export interface ServerRequestMap {
 }
 export type ServerRequestMethod = keyof ServerRequestMap
 export const SERVER_REQUEST_METHODS = [
+  'app.action',
   'approval',
   'clarify',
   'display.install.sudo',

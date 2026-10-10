@@ -9,7 +9,8 @@ action against its REAL stores and answers with a JSON object, which is passed b
 verbatim via ``passthrough_json``. An empty answer means no app window showed the chat.
 
 ``desktop_ui`` toolset: desktop-sourced sessions only. Action ids are stable strings
-owned by the app's action registry (tabs, surfaces, Configure, phone pairing, layout);
+owned by the app's action registry (tabs, panes, layout, ...); the schema deliberately
+does not list them, so the backend never goes stale against the app;
 an unknown id is answered by the app as ``{ok: false, detail: 'unknown action id: …'}``.
 """
 
@@ -30,8 +31,7 @@ def app_action_tool(
     name = (action or "").strip()
     if not name:
         return tool_error(
-            "action is required — a stable app action id, e.g. 'pair.show-qr', "
-            "'configure.open-row', 'tab.open', 'surface.open', 'layout.apply'.")
+            "action is required: an app action id such as 'tab.list' or 'tab.open'.")
     if args is not None and not isinstance(args, dict):
         return tool_error("args must be an object (a JSON object of action parameters).")
     payload = {"action": name}
@@ -45,39 +45,22 @@ def app_action_tool(
         return tool_error(
             "No Hermes app window answered the action request. Open this chat in the "
             "desktop app (it must be the live client for this session) and try again. "
-            "If the app IS open, it may be older than this backend — update it and retry.")
+            "If the app IS open, it may be older than this backend; update it and retry.")
     return passthrough_json(raw)
 
 
 APP_ACTION_SCHEMA = {
     "name": "app_action",
     "description": (
-        "Drive the Hermes desktop app's own UI: open/close/focus tabs and work surfaces "
-        "(files, history, search, browser, screen), open the Configure surface and its rows, "
-        "run a Configure action, and the phone pairing flow. Returns the app's REAL outcome "
-        "as JSON ({ok, action, detail, …}) — it is a request/response round-trip, so a false "
-        "result is the app telling you the control did not work, never a silent success. "
-        "Stable action ids: tab.open, tab.close, tab.select, tab.focus, surface.open, "
-        "surface.close, configure.open, configure.close, configure.open-row, pair.show-qr, "
-        "pair.devices, pair.revoke, refresh-tools, new-bot, identity, section, skills, "
-        "routines, tools, connections, layout.apply. Pass action-specific fields in `args` "
-        "(e.g. tabId, surface, id, url, preset)."
+        "Run one UI action in the Hermes desktop app (tabs, panes, layout). `action` is an "
+        "app-owned id such as tab.list, tab.open, pane.split; `args` are its parameters. "
+        "Returns the app's JSON {ok, detail, ...}; ok:false means it did not work."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "action": {
-                "type": "string",
-                "description": "Stable action id, e.g. 'pair.show-qr'.",
-            },
-            "args": {
-                "type": "object",
-                "description": (
-                    "Action parameters (JSON object). e.g. {id} for pair.revoke / "
-                    "configure.open-row; {surface: 'files'} for surface.open; {preset} for "
-                    "layout.apply; {url} for tab.open."
-                ),
-            },
+            "action": {"type": "string", "description": "Action id, e.g. tab.list."},
+            "args": {"type": "object", "description": "Action parameters."},
         },
         "required": ["action"],
     },
