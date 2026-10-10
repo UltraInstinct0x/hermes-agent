@@ -753,6 +753,9 @@ def _deliver_to_bot_chat(job: dict, content: str, profile: str, *,
             [str(source_home), job_id, str(run_id), str(home)],
             ensure_ascii=False, separators=(",", ":"),
         ).encode("utf-8")).hexdigest()
+        # The only trace of which lane a run took: turn mode and notice mode otherwise log nothing until
+        # the final outcome line, which made a process running older code indistinguishable from a bug.
+        logger.info("Job '%s': Bot Chat delivery mode=%s profile=%s", job_id, mode, profile_label)
         if mode == "notice":
             return deliver_bot_chat_notice(
                 job, content, home, key, f"bot-chat:{profile_label}",
