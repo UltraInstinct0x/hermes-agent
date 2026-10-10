@@ -16,6 +16,16 @@ _SUBAGENT_SNAPSHOT_FIELDS = (
 _SUBAGENT_TAIL_BYTES = 16384
 
 
+def _subagent_snapshot(record):
+    """Wire projection of one live child record. ``child_session_id`` is the child agent's own durable
+    session id, the same value the ``subagent.*`` frames carry, so a client that re-seeds from this
+    roster after a reload can still open the child's transcript. None until the child has a session."""
+    snapshot = {key: record.get(key) for key in _SUBAGENT_SNAPSHOT_FIELDS}
+    snapshot["child_session_id"] = str(
+        getattr(record.get("agent"), "session_id", "") or record.get("child_session_id") or "") or None
+    return snapshot
+
+
 def _owned_subagent_records(session_id, transport, owner):
     from tools.delegate_tool_registry import _active_subagents, _active_subagents_lock, _subagent_transport_matches
 
@@ -58,7 +68,7 @@ def _(rid, params):
         return _err(rid, 4001, "session not found or not owned by this transport")
     live = _visible_subagent_records(session_id, transport, owner)
     return _ok(rid, {
-        "subagents": [{key: r.get(key) for key in _SUBAGENT_SNAPSHOT_FIELDS} for r in live],
+        "subagents": [_subagent_snapshot(r) for r in live],
         "delegations": _failed_delegations(session_id, owner),
     })
 
