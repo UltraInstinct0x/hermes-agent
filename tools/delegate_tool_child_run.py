@@ -66,11 +66,21 @@ def _route_report(child: Any) -> Optional[dict[str, Any]]:
             "service_tier": service_tier_word(_tier_in_effect(child)),
             **({"fallback_activated": True} if getattr(child, "_fallback_activated", False) is True else {})}
 
+
+def _child_identity(child: Any) -> dict[str, Any]:
+    """``{child_session_id[, resumed]}`` of a child agent, empty for doubles without a string session id."""
+    sid = _str_or_none(getattr(child, "session_id", None))
+    if not sid:
+        return {}
+    return {"child_session_id": sid, **({"resumed": True} if getattr(child, "_delegate_resumed", False) is True else {})}
+
+
 def _fabricated_entry(idx: int, status: str, error: str, child: Any, duration: float = 0) -> dict[str, Any]:
     """Result entry for a child that raised, never finished, or was abandoned."""
     entry = {
         "task_index": idx, "status": status, "summary": None, "error": error, "api_calls": 0,
         "duration_seconds": duration, "_child_role": getattr(child, "_delegate_role", None),
+        **_child_identity(child),
     }
     route = _route_report(child)
     if route is not None:
@@ -635,6 +645,8 @@ def _build_result_entry(
         "task_index": task_index,
         "status": status,
         "summary": summary,
+        # Lets the parent continue this child later (delegate_task action='resume'); absent on test doubles.
+        **_child_identity(child),
         "api_calls": result.get("api_calls", 0),
         "duration_seconds": duration,
         "model": _str_or_none(getattr(child, "model", None)),
@@ -691,6 +703,10 @@ def _build_result_entry(
     if isinstance(_missed_steer, str) and _missed_steer.strip():
         entry["missed_steer"] = _missed_steer
         _miss_note = ("[steer did not land — the subagent finished before it could " f"be delivered: {_missed_steer}]")
+        if entry.get("child_session_id"):
+            # The child's session is intact: apply the missed instruction as a follow-up instead of re-researching.
+            _miss_note += (f" [apply it with delegate_task(action='resume', resume_session_id="
+                           f"'{entry['child_session_id']}', goal=<the instruction>)]")
         entry["summary"] = f"{summary}\n\n{_miss_note}" if summary else _miss_note
     return entry
 
@@ -903,6 +919,7 @@ class _ChildRun:
         # Resolved after seed_workspace so a multimodal goal's text part carries the worktree note too.
         _images = list(getattr(child, "_delegate_images", None) or [])
         user_message: Any = _build_child_goal_message(self.goal, _images, child) if _images else self.goal
+        _history = getattr(child, "_resume_history", None)  # set only for a resumed child (a list)
 
         def _run_with_thread_capture():
             worker_thread_holder["t"] = threading.current_thread()
@@ -912,6 +929,8 @@ class _ChildRun:
             with child_profile_scope(child), delegated_child_context(str(getattr(child, "session_id", "") or "")):
                 return child.run_conversation(
                     user_message=user_message, task_id=self.child_task_id, stream_callback=self.relay_text,
+                    # A resumed child continues its stored transcript; a fresh one starts empty (history=None).
+                    **({"conversation_history": list(_history)} if isinstance(_history, list) and _history else {}),
                 )
 
         future = executor.submit(contextvars.copy_context().run, _run_with_thread_capture)
@@ -1105,6 +1124,10 @@ class _ChildRun:
         no turn is active."""
         child = self.child
         heartbeat.stop()
+        # A resumed child's session is free for the next resume only once this run is over.
+        from tools.delegate_tool_resume import release_resume
+        _claim = getattr(child, "_resume_claim", None)
+        release_resume(_claim if isinstance(_claim, str) else None)
 
         # Safe even if the child was never registered (ID missing on test doubles).
         if self.subagent_id:

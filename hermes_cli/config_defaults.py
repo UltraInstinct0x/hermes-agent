@@ -1379,6 +1379,9 @@ DEFAULT_CONFIG = {
         # notifications to the PARENT; false suppresses them (the child's result is the
         # deliverable). Async-delegation results are NEVER suppressed.
         "surface_child_process_notifications": False,
+        # delegate_task(action='list') shows children that finished within this many hours, and
+        # action='resume' accepts only children active within it (continue a finished child with a follow-up).
+        "resume_window_hours": 24,
     },
     # Ephemeral prefill messages file — JSON list of {role, content} dicts injected at the start of
     # every API call for few-shot priming. Never saved to sessions/logs/trajectories.
