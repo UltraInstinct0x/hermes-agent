@@ -50,6 +50,7 @@ class _Batch:
     group: Optional[str] = None
     unit_id: Optional[str] = None  # the async registry id this unit runs under (``<call_id>-k`` for split calls)
     live_home: Any = None  # explicit profile home for transcripts/manifest (#91996); None = ambient resolve
+    lease: Any = None  # the call's ChildLease (delegation.max_total_children); None when run outside delegate_task
 
     def owner_kwargs(self) -> dict[str, Any]:
         """Steer/stop authority of the originating session, passed to every child run."""
@@ -60,7 +61,13 @@ class _Batch:
 
     def run_child(self, i: int, task: dict[str, Any], child: Any) -> dict[str, Any]:
         from tools.delegate_tool import _run_single_child
-        return _run_single_child(task_index=i, goal=task["goal"], child=child, parent_agent=self.parent_agent, **self.owner_kwargs())
+        if self.lease is not None:
+            self.lease.mark_started(i)
+        try:
+            return _run_single_child(task_index=i, goal=task["goal"], child=child, parent_agent=self.parent_agent, **self.owner_kwargs())
+        finally:
+            if self.lease is not None:
+                self.lease.release_when_settled(i, child)  # exactly when this child's run ends, on every exit path
 
 
 def _announce_batch(parent_agent, n_tasks: int, live_deleg_id: Optional[str]) -> None:
@@ -227,7 +234,8 @@ _SYNC_FALLBACK_NOTES = {
         "worker, or a stateless HTTP endpoint). The subagent(s) ran SYNCHRONOUSLY and the result is included above."
     ),
     "at_capacity": (
-        "The background delegation pool was at capacity (delegation.max_concurrent_children), so the subagent(s) ran "
+        "The background delegation pool was at capacity (delegation.max_concurrent_children background calls already "
+        "running), so the subagent(s) ran "
         "SYNCHRONOUSLY and the result is included above. Raise "
         "delegation.max_concurrent_children in config.yaml to allow more concurrent background delegations."
     ),
@@ -397,6 +405,13 @@ def _dispatch_unit(unit: _Batch, unit_id: Optional[str], slot_key: Optional[str]
         for c in child_agents:
             _signal_child_stop(c, "Async delegation cancelled")
 
+    def _runner():
+        try:
+            return _execute_and_aggregate(unit, honor_parent_interrupt=False)
+        finally:
+            if unit.lease is not None:  # a child that never started (pool failure, early exit) must not stay charged
+                unit.lease.release_unstarted([i for (i, _, _) in unit.children])
+
     return dispatch_async_delegation_batch(
         # Call-wide goals: completion formatting indexes them by task_index.
         goals=[t["goal"] for t in unit.task_list], context=unit.context,
@@ -404,7 +419,7 @@ def _dispatch_unit(unit: _Batch, unit_id: Optional[str], slot_key: Optional[str]
         # creds["model"] is None when delegation.model is blank (children inherit): report what the child runs on.
         role=unit.top_role, model=unit.creds["model"] or next(
             (getattr(c, "model", None) for c in child_agents if getattr(c, "model", None)), None),
-        runner=lambda: _execute_and_aggregate(unit, honor_parent_interrupt=False),
+        runner=_runner,
         interrupt_fn=_interrupt, delegation_id=unit_id, slot_key=slot_key,
         task_indexes=[i for (i, _, _) in unit.children] if len(unit.children) < len(unit.task_list) else None,
         # Persist locators before starting workers; live_paths omits failed writers and can be compressed.
@@ -455,6 +470,8 @@ def _dispatch_background(batch: _Batch) -> str:
         if dispatch.get("status") == "dispatched":
             slot_key = slot_key or dispatch["delegation_id"]
             dispatched.append((unit, dispatch["delegation_id"]))
+            if batch.lease is not None:
+                batch.lease.mark_dispatched([i for (i, _, _) in unit.children], dispatch["delegation_id"])
             continue
         _restore_parent_cancellation(unit)
         if not dispatched:
@@ -471,6 +488,29 @@ def _dispatch_background(batch: _Batch) -> str:
     if inline_results:
         payload["inline_results"] = inline_results
     return json.dumps(payload, ensure_ascii=False)
+
+def _admit_children(count: int, parent_agent: Any) -> tuple[Any, Optional[str]]:
+    """Reserve ``count`` slots against delegation.max_total_children: ``(lease, None)`` or ``(None, model-facing
+    error)``. A refused call starts nothing and changes no count. The sync fallback of a refused background call
+    would exceed the same limit, so a refusal is final: the error tells the model how to proceed."""
+    from tools.delegate_tool import _get_max_total_children
+    from tools.delegation_child_budget import ChildBudgetExceeded, acquire_children
+    limit = _get_max_total_children()
+    try:
+        return acquire_children(count, limit), None
+    except ChildBudgetExceeded as exc:
+        depth = getattr(parent_agent, "_delegate_depth", 0)
+        logger.warning(
+            "delegate_task: batch of %d rejected by delegation.max_total_children=%d (%d live, depth %d)",
+            count, limit, exc.live, depth,
+        )
+        running = f"{exc.live} of {limit} allowed subagents are already running, so this call was not started."
+        if depth > 0:
+            return None, f"{running} Do this work yourself inline instead of delegating it."
+        return None, (
+            f"{running} Wait for running subagents to finish (their results arrive as messages), then delegate "
+            "again with fewer tasks, or do this work yourself."
+        )
 
 def _run_batch(batch: _Batch, background: bool) -> str:
     """Tool result JSON: a dispatch handle (background) or the joined combined results."""
