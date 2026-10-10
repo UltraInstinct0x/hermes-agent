@@ -496,7 +496,8 @@ def _run_single_query_mode(cli, query, image, quiet, oneshot, stream_json: bool 
     os.environ["HERMES_SINGLE_QUERY_SESSION"] = "1"
     from hermes_cli.quiet_single_query import exit_single_query
     if os.environ.get("HERMES_KANBAN_TASK"):
-        from tools.kanban_tools import register_current_worker_from_env
+        from tools.kanban_tools import register_current_worker_from_env, seed_comment_watermark_from_env
+        seed_comment_watermark_from_env()  # notes added after this point reach the live turn (see tool_executor)
         if not register_current_worker_from_env():
             # No exit trailer: the task log now belongs to the run that replaced this one.
             print(t("cli.single_query.kanban_run_reclaimed"), file=sys.stderr)

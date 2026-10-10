@@ -411,9 +411,16 @@ method("delegation.pause", params=DelegationPauseParams, result=DelegationPauseR
        doc="Block/unblock NEW spawns globally (active children keep running); returns the new state.")
 
 
+class SteerMode(WireEnum):
+    queue = "queue"
+    redirect = "redirect"
+
+
 class SubagentSteerParams(SessionParams):
     subagent_id: str
     text: str
+    # queue (default): delivered at the child's next tool boundary. redirect: also cancels its in-flight model request.
+    mode: SteerMode | None = None
 
 
 class SteerStatus(WireEnum):
@@ -421,16 +428,53 @@ class SteerStatus(WireEnum):
     rejected = "rejected"
 
 
+class ResumeFallback(OpenModel):
+    """Lossless recovery for an undelivered steer: resume the child's session with the same text."""
+
+    action: str
+    resume_session_id: str
+    goal: str
+
+
 class SubagentSteerResult(Result):
-    """``queued`` is not ``delivered``: a child past its final tool batch surfaces ``missed_steer``."""
+    """``queued`` is not ``delivered``: a child past its final tool batch surfaces ``missed_steer``.
+    A ``rejected`` steer for a child whose session is known carries ``fallback`` (call ``subagent.resume``)."""
 
     status: SteerStatus
     subagent_id: str
     text: str
+    mode: SteerMode | None = None
+    fallback: ResumeFallback | None = None
 
 
 method("subagent.steer", params=SubagentSteerParams, result=SubagentSteerResult,
-       doc="Queue steering text into a live delegated child owned by this session.")
+       doc="Queue steering text into a live delegated child owned by this session; mode=redirect applies it now.")
+
+
+class ResumeStatus(WireEnum):
+    dispatched = "dispatched"
+    rejected = "rejected"
+
+
+class SubagentResumeParams(SessionParams):
+    resume_session_id: str
+    goal: str
+    context: str | None = None
+
+
+class SubagentResumeResult(Result):
+    """``dispatched``: the finished child continues on the SAME session (frames carry ``child_session_id`` and
+    ``resumed``). ``rejected``: ``error`` is the honest reason (gone, not this conversation's, running, too old/large)."""
+
+    status: ResumeStatus
+    resume_session_id: str
+    delegation_id: str | None = None
+    child_session_ids: list[str | None] | None = None
+    error: str | None = None
+
+
+method("subagent.resume", params=SubagentResumeParams, result=SubagentResumeResult,
+       doc="Continue a finished delegated child of this session with a follow-up, without a model turn.")
 
 
 # ── handoff ───────────────────────────────────────────────────────────────────────────────────

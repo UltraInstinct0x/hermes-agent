@@ -2210,19 +2210,89 @@ def _(rid, params: dict) -> dict:
 @method("subagent.steer")
 def _(rid, params: dict) -> dict:
     """Queue steering text into a live delegated child (the in-flight tool call is never cut). "queued"
-    is not "delivered": a child past its final tool batch surfaces ``missed_steer`` on the parent entry."""
+    is not "delivered": a child past its final tool batch surfaces ``missed_steer`` on the parent entry.
+    ``mode='redirect'`` also cancels the child's in-flight model request. A rejected steer whose child session
+    is known returns ``fallback`` ({action:'resume', ...}) so the caller can apply the same text via
+    ``subagent.resume``.
+
+    Authority: the exact generation recorded at spawn (UI session id + attached transport + session record), or,
+    after a Desktop reconnect re-minted them (#114909), a transport proven attached to a live session whose
+    conversation owns the child by durable lineage (``steer_subagent(lineage_owner=...)``). Unrelated sessions
+    never match either way."""
     from tools.delegate_tool import steer_subagent
+    from tools.delegate_tool_registry import STEER_MODES, steer_fallback
     if not (subagent_id := _str_param(params, "subagent_id")):
         return _err(rid, 4000, "subagent_id required")
     if not (text := (params.get("text") or "").strip()):
         return _err(rid, 4002, "text is required")
+    mode = _str_param(params, "mode", "queue").lower()
+    if mode not in STEER_MODES:
+        return _err(rid, 4003, f"mode must be one of {', '.join(STEER_MODES)}")
     if (err := _sess_nowait(params, rid)[1]) is not None:
         return err
     owner_id = _str_param(params, "session_id")
     transport, owner = _current_session_steer_authority(owner_id)
     queued = transport is not None and owner is not None and steer_subagent(
-        subagent_id, text, owner_session_id=owner_id, owner_transport=transport, owner_session_record=owner)
-    return _ok(rid, {"status": "queued" if queued else "rejected", "subagent_id": subagent_id, "text": text})
+        subagent_id, text, owner_session_id=owner_id, owner_transport=transport, owner_session_record=owner,
+        mode=mode, lineage_owner=owner.get("agent"))
+    result = {"status": "queued" if queued else "rejected", "subagent_id": subagent_id, "text": text, "mode": mode}
+    if not queued and owner is not None:
+        # Only for a child this session's conversation owns: never reveal another conversation's session id.
+        from tools.delegate_tool_registry import (
+            _active_subagents, _active_subagents_lock, _owns_subagent_record, _recent_subagents)
+        with _active_subagents_lock:
+            known = _active_subagents.get(subagent_id) or _recent_subagents.get(subagent_id)
+        if known and _owns_subagent_record(
+                {"owner_agent_session_id": known.get("owner_agent_session_id"), "agent": known.get("agent")},
+                owner.get("agent")):
+            if fallback := steer_fallback(subagent_id, text):
+                result["fallback"] = fallback
+    return _ok(rid, result)
+
+
+@method("subagent.resume")
+def _(rid, params: dict) -> dict:
+    """Continue a FINISHED delegated child with a follow-up, without a model turn: the call the model makes as
+    ``delegate_task(action='resume')`` (identical guard rails and async dispatch; frames carry the same
+    ``child_session_id`` and ``resumed: true``). The child's completion re-enters this conversation as the usual batch
+    message. Authority is the steer authority above: a transport attached to the live session, and the child must be
+    this conversation's by durable lineage (``prepare_resume``), so another conversation's child is refused."""
+    import json as _json
+    from tools.delegate_tool import delegate_task
+    if not (resume_id := _str_param(params, "resume_session_id")):
+        return _err(rid, 4000, "resume_session_id required")
+    if not (goal := (params.get("goal") or "").strip()):
+        return _err(rid, 4002, "goal is required")
+    if (err := _sess_nowait(params, rid)[1]) is not None:
+        return err
+    owner_id = _str_param(params, "session_id")
+    transport, owner = _current_session_steer_authority(owner_id)
+    if transport is None or owner is None:
+        return _err(rid, 4001, "session not found or not owned by this transport")
+    if (agent := owner.get("agent")) is None:
+        return _err(rid, 5032, "session agent is not ready yet")
+    # Off-turn RPC: bind the identity a turn binds (as /review does), or the child registers with no owner and the
+    # completion cannot route back to this chat.
+    tokens = _set_session_context(owner["session_key"], ui_session_id=owner_id)
+    runtime_token = _current_runtime_session_record.set(owner)
+    try:
+        with _session_profile_runtime_scope(owner):
+            raw = delegate_task(
+                action="resume", resume_session_id=resume_id, goal=goal, context=(params.get("context") or None),
+                background=True, parent_agent=agent)
+    except Exception as exc:
+        return _ok(rid, {"status": "rejected", "resume_session_id": resume_id, "error": f"resume failed to start: {exc}"})
+    finally:
+        _current_runtime_session_record.reset(runtime_token)
+        _clear_session_context(tokens)
+    try:
+        payload = _json.loads(raw)
+    except ValueError:
+        payload = {"error": str(raw)}
+    if payload.get("error"):
+        return _ok(rid, {"status": "rejected", "resume_session_id": resume_id, "error": str(payload["error"])})
+    return _ok(rid, {"status": "dispatched", "resume_session_id": resume_id,
+                     "delegation_id": payload.get("delegation_id"), "child_session_ids": payload.get("child_session_ids")})
 
 
 @method("spawn_tree.save")
