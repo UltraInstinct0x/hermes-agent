@@ -595,8 +595,8 @@ def delegate_task(
         return tool_error(
             "action='resume' requires resume_session_id (a child_session_id from a completion message or "
             "action='list') and goal (the follow-up for that child).")
-    if resume_session_id and tasks:
-        return tool_error("Pass resume_session_id with a top-level goal, or put resume_session_id inside the task entry, not both.")
+    if resume_session_id and not tasks and not (goal or "").strip() and (message or "").strip():
+        goal = message  # the schema has no top-level goal; the follow-up often arrives as `message`
 
     # Operator kill switch (TUI / delegation.pause RPC): blocks NEW spawns only.
     if is_spawn_paused():
@@ -652,7 +652,10 @@ def delegate_task(
     # routes, so each child reports what it actually runs on.
     creds = runnable[0].creds if all(r.creds == runnable[0].creds for r in runnable) else dict.fromkeys(runnable[0].creds)
     if resume_session_id:
-        task_list[0]["resume_session_id"] = resume_session_id
+        # The follow-up goal lives in tasks[0].goal (the schema's only goal field) or in a legacy top-level goal.
+        if len(task_list) != 1:
+            return tool_error("action='resume' continues ONE child: pass a single task (its goal is the follow-up).")
+        task_list[0].setdefault("resume_session_id", resume_session_id)
     resume_plans, err = _plan_resumes(task_list, parent_agent)
     if err:
         return tool_error(err)
@@ -936,7 +939,8 @@ DELEGATE_TASK_SCHEMA = {
             "resume_session_id": _p(
                 "string",
                 "For action='resume': the child_session_id of a finished child (shown in its completion message and "
-                "in action='list'). `goal` is then the follow-up instruction for that child, not a self-contained task.",
+                "in action='list'). Put the follow-up instruction in tasks[0].goal (one task); it is addressed to that child, "
+                "not a self-contained task. Alternatively set resume_session_id inside the task entry.",
             ),
             "subagent_id": _p("string", "Target for action='steer'/'stop' (ids from the spawn response or action='list')."),
             "message": _p(
