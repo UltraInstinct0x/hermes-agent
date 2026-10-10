@@ -87,11 +87,18 @@ def _fabricated_entry(idx: int, status: str, error: str, child: Any, duration: f
         entry["route"] = route
     return entry
 
+def _attach_resume_fallback(entry: dict[str, Any], text: str) -> None:
+    """Machine-readable recovery for a missed steer: resume the child's session with the same text."""
+    if entry.get("child_session_id") and text.strip():
+        entry["fallback"] = {"action": "resume", "resume_session_id": entry["child_session_id"], "goal": text.strip()}
+
+
 def _append_missed_steer(entry: dict[str, Any], late_steer: Optional[str]) -> None:
     """Record steer text that won the race with the child's failure/timeout."""
     if late_steer:
         entry["missed_steer"] = late_steer
         entry["error"] += (" [steer did not land before the subagent stopped: " f"{late_steer}]")
+        _attach_resume_fallback(entry, late_steer)
 
 def _close_child(child: Any, log_message: str) -> None:
     """Best-effort ``child.close()`` (tool sandboxes, browser daemons, httpx clients)."""
@@ -707,6 +714,7 @@ def _build_result_entry(
             # The child's session is intact: apply the missed instruction as a follow-up instead of re-researching.
             _miss_note += (f" [apply it with delegate_task(action='resume', resume_session_id="
                            f"'{entry['child_session_id']}', goal=<the instruction>)]")
+            _attach_resume_fallback(entry, _missed_steer)
         entry["summary"] = f"{summary}\n\n{_miss_note}" if summary else _miss_note
     return entry
 

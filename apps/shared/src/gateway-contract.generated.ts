@@ -338,14 +338,41 @@ export interface SubagentSteerParams {
   profile?: string | null
   subagent_id: string
   text: string
+  mode?: SteerMode | null
 }
-/** ``queued`` is not ``delivered``: a child past its final tool batch surfaces ``missed_steer``. */
+export type SteerMode = 'queue' | 'redirect'
+/** ``queued`` is not ``delivered``: a child past its final tool batch surfaces ``missed_steer``. A ``rejected`` steer for a child whose session is known carries ``fallback`` (call ``subagent.resume``). */
 export interface SubagentSteerResult {
   status: SteerStatus
   subagent_id: string
   text: string
+  mode?: SteerMode | null
+  fallback?: ResumeFallback | null
 }
 export type SteerStatus = 'queued' | 'rejected'
+/** Lossless recovery for an undelivered steer: resume the child's session with the same text. */
+export interface ResumeFallback {
+  action: string
+  resume_session_id: string
+  goal: string
+  [key: string]: unknown
+}
+export interface SubagentResumeParams {
+  session_id: string
+  profile?: string | null
+  resume_session_id: string
+  goal: string
+  context?: string | null
+}
+/** ``dispatched``: the finished child continues on the SAME session (frames carry ``child_session_id`` and ``resumed``). ``rejected``: ``error`` is the honest reason (gone, not this conversation's, running, too old/large). */
+export interface SubagentResumeResult {
+  status: ResumeStatus
+  resume_session_id: string
+  delegation_id?: string | null
+  child_session_ids?: (string | null)[] | null
+  error?: string | null
+}
+export type ResumeStatus = 'dispatched' | 'rejected'
 export interface HandoffRequestParams {
   session_id: string
   profile?: string | null
@@ -6511,7 +6538,9 @@ export interface RpcMethods {
   'subagent.interrupt': { params: SubagentIdParams; result: SubagentInterruptResult }
   /** Live children owned by this session (other sessions' children never leak). */
   'subagent.list': { params: SessionParams; result: SubagentListResult }
-  /** Queue steering text into a live delegated child owned by this session. */
+  /** Continue a finished delegated child of this session with a follow-up, without a model turn. */
+  'subagent.resume': { params: SubagentResumeParams; result: SubagentResumeResult }
+  /** Queue steering text into a live delegated child owned by this session; mode=redirect applies it now. */
   'subagent.steer': { params: SubagentSteerParams; result: SubagentSteerResult }
   /** Last 16KB of an owned child's live transcript. */
   'subagent.tail': { params: SubagentIdParams; result: SubagentTailResult }
@@ -6802,6 +6831,7 @@ export const RPC_METHODS = [
   'spawn_tree.save',
   'subagent.interrupt',
   'subagent.list',
+  'subagent.resume',
   'subagent.steer',
   'subagent.tail',
   'subscription.change',
