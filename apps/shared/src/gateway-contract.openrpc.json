@@ -4021,8 +4021,26 @@
       }
     },
     {
+      "name": "subagent.resume",
+      "summary": "Continue a finished delegated child of this session with a follow-up, without a model turn.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/SubagentResumeParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SubagentResumeResult"
+        }
+      }
+    },
+    {
       "name": "subagent.steer",
-      "summary": "Queue steering text into a live delegated child owned by this session.",
+      "summary": "Queue steering text into a live delegated child owned by this session; mode=redirect applies it now.",
       "params": [
         {
           "name": "params",
@@ -33148,6 +33166,31 @@
         "title": "RequestCancelPayload",
         "type": "object"
       },
+      "ResumeFallback": {
+        "additionalProperties": true,
+        "description": "Lossless recovery for an undelivered steer: resume the child's session with the same text.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "resume_session_id": {
+            "title": "Resume Session Id",
+            "type": "string"
+          },
+          "goal": {
+            "title": "Goal",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "resume_session_id",
+          "goal"
+        ],
+        "title": "ResumeFallback",
+        "type": "object"
+      },
       "ResumePhaseStatus": {
         "enum": [
           "loading",
@@ -33155,6 +33198,14 @@
           "failed"
         ],
         "title": "ResumePhaseStatus",
+        "type": "string"
+      },
+      "ResumeStatus": {
+        "enum": [
+          "dispatched",
+          "rejected"
+        ],
+        "title": "ResumeStatus",
         "type": "string"
       },
       "ReviewSummaryPayload": {
@@ -41971,6 +42022,14 @@
         "title": "StatusUpdatePayload",
         "type": "object"
       },
+      "SteerMode": {
+        "enum": [
+          "queue",
+          "redirect"
+        ],
+        "title": "SteerMode",
+        "type": "string"
+      },
       "SteerStatus": {
         "enum": [
           "queued",
@@ -42415,6 +42474,119 @@
         "title": "SubagentOutputTailEntry",
         "type": "object"
       },
+      "SubagentResumeParams": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
+          "resume_session_id": {
+            "title": "Resume Session Id",
+            "type": "string"
+          },
+          "goal": {
+            "title": "Goal",
+            "type": "string"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Context"
+          }
+        },
+        "required": [
+          "session_id",
+          "resume_session_id",
+          "goal"
+        ],
+        "title": "SubagentResumeParams",
+        "type": "object"
+      },
+      "SubagentResumeResult": {
+        "additionalProperties": false,
+        "description": "``dispatched``: the finished child continues on the SAME session (frames carry ``child_session_id`` and\n``resumed``). ``rejected``: ``error`` is the honest reason (gone, not this conversation's, running, too old/large).",
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/ResumeStatus"
+          },
+          "resume_session_id": {
+            "title": "Resume Session Id",
+            "type": "string"
+          },
+          "delegation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Delegation Id"
+          },
+          "child_session_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Child Session Ids"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error"
+          }
+        },
+        "required": [
+          "status",
+          "resume_session_id"
+        ],
+        "title": "SubagentResumeResult",
+        "type": "object"
+      },
       "SubagentSnapshot": {
         "additionalProperties": false,
         "description": "``methods_subagents._SUBAGENT_SNAPSHOT_FIELDS`` projection of one live child record.",
@@ -42589,6 +42761,17 @@
           "text": {
             "title": "Text",
             "type": "string"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SteerMode"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
@@ -42601,7 +42784,7 @@
       },
       "SubagentSteerResult": {
         "additionalProperties": false,
-        "description": "``queued`` is not ``delivered``: a child past its final tool batch surfaces ``missed_steer``.",
+        "description": "``queued`` is not ``delivered``: a child past its final tool batch surfaces ``missed_steer``.\nA ``rejected`` steer for a child whose session is known carries ``fallback`` (call ``subagent.resume``).",
         "properties": {
           "status": {
             "$ref": "#/components/schemas/SteerStatus"
@@ -42613,6 +42796,28 @@
           "text": {
             "title": "Text",
             "type": "string"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SteerMode"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "fallback": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResumeFallback"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
