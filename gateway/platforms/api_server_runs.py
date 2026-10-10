@@ -81,7 +81,7 @@ _SUBAGENT_EVENT_KEYS = (
     "goal", "task_count", "task_index", "subagent_id", "child_session_id", "delegation_id", "parent_id",
     "depth", "model", "tool_count", "status", "summary", "duration_seconds", "input_tokens",
     "output_tokens", "reasoning_tokens", "api_calls", "cost_usd", "files_read", "files_written",
-    "output_tail")
+    "output_tail", "resumed")
 _SUBAGENT_TEXT_KEYS = ("goal", "summary", "output_tail")
 # Terminal usage payload: (wire key, agent attribute), in wire order. Cache reads ride along so a
 # cost poller does not book them as full-price input (#102101).

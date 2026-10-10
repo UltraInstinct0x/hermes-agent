@@ -42202,6 +42202,18 @@
             ],
             "default": null,
             "title": "Tool Preview"
+          },
+          "resumed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resumed"
           }
         },
         "required": [

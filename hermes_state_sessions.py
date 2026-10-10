@@ -850,6 +850,26 @@ class SessionSessionsMixin:
         )
         return dict(row) if row else None
 
+    def list_delegate_children(
+        self, parent_session_ids: Sequence[str], *, since: float, limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Delegated-subagent sessions spawned by any of ``parent_session_ids`` that were active at or after
+        ``since`` (epoch seconds), newest activity first and bounded by ``limit``. Only rows that hold
+        messages qualify (nothing to continue otherwise). Cheap projection: no prompts or message bodies."""
+        ids = [sid for sid in dict.fromkeys(str(s) for s in parent_session_ids) if sid]
+        if not ids or limit <= 0:
+            return []
+        active = _sql_session_last_active("s")
+        rows = self._read_all(
+            "SELECT s.id, s.title, s.started_at, s.ended_at, s.end_reason, s.message_count, "
+            f"s.parent_session_id, {active} AS last_active FROM sessions s "
+            f"WHERE s.parent_session_id IN ({_session_ids_placeholders(ids)}) "
+            f"AND {_delegate_from_json('s.model_config')} IS NOT NULL AND s.message_count > 0 "
+            f"AND {active} >= ? ORDER BY last_active DESC, s.id DESC LIMIT ?",
+            (*ids, float(since), int(limit)),
+        )
+        return [dict(row) for row in rows]
+
     def get_recent_session_model_route(self, session_id: str) -> Optional[dict[str, Any]]:
         """Most recently used main-loop model route as one coherent per-call tuple
         (``session_model_usage`` keeps model+provider together; ``sessions`` mixes route changes).
