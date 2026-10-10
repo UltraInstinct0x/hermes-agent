@@ -614,9 +614,38 @@ _comment_poll_last_attempt: float = 0.0
 _comment_watermark: dict[str, int] = {}
 
 
+# A worker whose task reached one of these has nothing left to steer; its notes wait for the next run.
+_COMMENT_INJECT_TERMINAL_STATUSES = frozenset({"done", "archived"})
+
+
+def seed_comment_watermark_from_env() -> bool:
+    """Mark everything already on the worker's task as seen (it is in the context the dispatcher built), at worker
+    START. Without this the first poll seeds lazily, so a note added between spawn and the first tool boundary
+    would count as history and never be injected. True iff a cursor was seeded; never raises."""
+    tid = os.environ.get("HERMES_KANBAN_TASK") if _is_dispatcher_owned_worker() else None
+    if not tid or tid in _comment_watermark:
+        return False
+    try:
+        with _board(None, quiet_close=True) as (kb, conn):
+            _comment_watermark[tid] = max((c.id for c in kb.list_comments_after(conn, tid, after_id=0)), default=0)
+        return True
+    except Exception:
+        logger.debug("comment-inject: seed failed", exc_info=True)
+        return False
+
+
 def inject_new_comments_from_env(agent: Any) -> bool:
     """Steer new operator comments on the worker's task into ``agent``; True iff a
-    steer was injected; never raises. Own comments (``_persisted_identity``) are skipped."""
+    steer was injected; never raises. Own comments (``_persisted_identity``) are skipped.
+
+    Wiring: ``AIAgent._touch_activity`` (``agent/activity_tracking.py``) calls this on every activity tick of a
+    worker (iteration starts, stream chunks, tool transitions), so a note is noticed within
+    ``_COMMENT_POLL_MIN_INTERVAL_SECONDS`` of being written, even mid model call. The text goes into the steer slot
+    and is drained at the next tool-batch boundary (``apply_pending_steer_to_tool_results``) as a user row, read by
+    the model's next request. Cheap by construction: no env task id means no work, at most one board read per
+    interval, one indexed ``id > cursor`` query per read. The cursor (seeded at worker start by
+    ``seed_comment_watermark_from_env``) advances past everything read, so a comment is delivered once. A task in a
+    terminal status gets nothing."""
     global _comment_poll_last_attempt
     # Operator notes address the dispatcher-owned worker; a delegate_task child sharing
     # this process must neither receive them nor advance the shared watermark (#112817).
@@ -629,6 +658,9 @@ def inject_new_comments_from_env(agent: Any) -> bool:
     seen = _comment_watermark.get(tid)
     try:
         with _board(None, quiet_close=True) as (kb, conn):
+            task = kb.get_task(conn, tid)
+            if task is None or getattr(task, "status", None) in _COMMENT_INJECT_TERMINAL_STATUSES:
+                return False
             rows = kb.list_comments_after(conn, tid, after_id=seen or 0)
     except Exception:
         logger.debug("comment-inject: bridge failed", exc_info=True)
