@@ -21,6 +21,8 @@ _HIGH_CONCURRENCY_WARNED = False
 MAX_DEPTH = 1  # flat by default: parent (0) -> child (1); deeper needs max_spawn_depth
 _MIN_SPAWN_DEPTH = 1  # floor for the configurable cap; MAX_DEPTH stays the default
 _LEGACY_MAX_ASYNC_WARNED = False
+_MAX_TOTAL_CHILDREN_CEILING = 1000  # each live agent costs ~6 MB RSS; beyond this a typo is likelier than intent
+_TOTAL_CHILDREN_WARNED = False
 # No default wall-clock cap on children: legitimate heavy work (deep reviews, research fan-outs, slow reasoning
 # models) was being killed mid-task. Stuck-child detection is the heartbeat staleness monitor;
 # delegation.child_timeout_seconds opts back in.
@@ -106,6 +108,36 @@ def _get_max_concurrent_children() -> int:
             "independently. High values multiply cost linearly.", result,
         )
     return result
+
+def _default_max_total_children() -> int:
+    """One full call is always admitted, parallel background calls are not: ``M + M*M`` when children can nest
+    (max_spawn_depth > 1 and orchestrators enabled), else ``2*M`` (a flat batch plus one more)."""
+    from tools.delegate_tool import _get_max_concurrent_children, _get_max_spawn_depth, _get_orchestrator_enabled
+    per_call = _get_max_concurrent_children()
+    nested = _get_max_spawn_depth() > 1 and _get_orchestrator_enabled()
+    return per_call + per_call * per_call if nested else 2 * per_call
+
+def _get_max_total_children() -> int:
+    """delegation.max_total_children: the most children alive at once in this process, at every depth. Unset uses
+    ``_default_max_total_children``. A value that is not an integer in 1.._MAX_TOTAL_CHILDREN_CEILING warns once and
+    uses the default."""
+    default = _default_max_total_children()
+    raw = _cfg().get("max_total_children")
+    if raw is None:
+        return default
+    try:
+        if isinstance(raw, bool) or (isinstance(raw, float) and not raw.is_integer()):
+            raise ValueError(raw)
+        value = int(raw)
+        if not 1 <= value <= _MAX_TOTAL_CHILDREN_CEILING:
+            raise ValueError(raw)
+    except (TypeError, ValueError):
+        _warn_once(
+            "_TOTAL_CHILDREN_WARNED", "delegation.max_total_children=%r is not an integer between 1 and %d; using "
+            "default %d", raw, _MAX_TOTAL_CHILDREN_CEILING, default,
+        )
+        return default
+    return value
 
 def _get_independent_completions() -> bool:
     """delegation.independent_completions (bool, default False): split a background call into per-task / per-group
