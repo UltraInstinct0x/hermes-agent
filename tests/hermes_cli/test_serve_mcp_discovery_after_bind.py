@@ -132,8 +132,9 @@ def test_first_gateway_ws_client_starts_the_armed_discovery_once(monkeypatch):
 
     monkeypatch.setattr(chat_ws, "_close_unless_sidecar_allowed", _allowed)
     monkeypatch.setattr("tui_gateway.ws.handle_ws", _handle_ws)
-    asyncio.run(chat_ws.gateway_ws(object()))
-    asyncio.run(chat_ws.gateway_ws(object()))
+    ws = types.SimpleNamespace(query_params={})  # what Starlette gives every websocket route
+    asyncio.run(chat_ws.gateway_ws(ws))
+    asyncio.run(chat_ws.gateway_ws(ws))
 
     assert calls == ["dashboard-mcp-discovery"]
     assert mcp_startup._mcp_discovery_deferred is None
