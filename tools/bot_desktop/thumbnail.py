@@ -20,6 +20,9 @@ _grab_lock = threading.Lock()
 
 def thumbnail_data_url(max_size: tuple[int, int] = THUMB_MAX, quality: int = 72) -> Optional[str]:
     """``data:image/jpeg;base64,...`` of the running screen, or ``None`` when no screen is up."""
+    if runtime._mac_backend():
+        jpeg = runtime._mac().thumbnail_jpeg()
+        return "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii") if jpeg else None
     env = runtime.published_env()
     display = env.get("DISPLAY")
     if not display:
