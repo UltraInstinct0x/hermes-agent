@@ -1284,7 +1284,7 @@ def _(rid, params: dict) -> dict:
         return proxied
     from tui_gateway import server_requests
     try:
-        remaining = server_requests.lock_answer(request_id, question_id, answer)
+        remaining = server_requests.lock_answer(request_id, question_id, answer, transport=_caller_transport())
     except ValueError as e:
         return _err(rid, 4002, str(e))
     if remaining is None:
@@ -1302,9 +1302,11 @@ def _(rid, params: dict) -> dict:
     result = params.get("result")
     if not request_id or not isinstance(result, dict):
         return _err(rid, 4002, "id and an object result required")
-    from tui_gateway import server_requests
+    from tui_gateway import human_requests, server_requests
     frame = {"jsonrpc": "2.0", "id": request_id, "result": result}
-    if server_requests.resolve_response(frame) or _relay_compute_host_response(frame):
+    answered = server_requests.resolve_response(
+        frame, _caller_transport(), via=human_requests.VIA_REQUEST_ANSWER)
+    if answered or _relay_compute_host_response(frame):
         return _ok(rid, {"status": "ok"})
     return _ok(rid, {"status": "expired"})
 
@@ -1339,6 +1341,11 @@ def _(rid, params: dict) -> dict:
         session = _approval_respond_session_fallback(params)
         if session is None:
             return err
+    from tui_gateway import server_requests
+    # The choice goes to the agent's own queue, which settles the request later without knowing who spoke.
+    server_requests.note_approval_answer(
+        str(params.get("session_id") or ""), params.get("request_id"), str(params.get("choice", "deny")),
+        transport=_caller_transport(), resolve_all=bool(params.get("all", False)))
     return _approval_reply(
         rid, "resolved",
         lambda a: a.resolve_gateway_approval(
