@@ -525,7 +525,7 @@ def _(rid, params: dict) -> dict:
     server→client requests; a WebSocket client that never sends it gets every such request failed fast
     instead of stalling the agent for the deadline (#112548)."""
     from hermes_cli.process_identity import local_desktop_client
-    from tui_gateway import server_requests
+    from tui_gateway import client_identity, server_requests
     from tui_gateway.contracts import registry as contracts
     transport = _caller_transport()
     # Each call updates what it names: the Desktop sends ``desktop_local`` on its own, so a backend older
@@ -537,8 +537,11 @@ def _(rid, params: dict) -> dict:
         if transport.desktop_local:
             from tui_gateway import server
             server.begin_local_desktop_boot()
+    identity = client_identity.declare(
+        transport, client_id=params.get("client_id"), label=params.get("label"), kind=params.get("kind"))
     return _ok(rid, {"server_requests": sorted(contracts.SERVER_REQUESTS), "declines_not_shown": True,
-                     "canonical_clarify_batch": True})
+                     "canonical_clarify_batch": True,
+                     "client_id": identity.client_id, "identity_source": identity.source})
 
 
 @method("ping")

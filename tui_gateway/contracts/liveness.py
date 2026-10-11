@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .base import Params, Result
+from .base import Params, Result, WireEnum
 from .registry import method
 
 
@@ -36,6 +36,18 @@ class ClientCapabilitiesParams(Params):
     #: private control socket; it is what makes the welcome trial and first-run onboarding available
     #: in a gateway that also serves the CLI, the TUI and bots.
     desktop_local: bool = False
+    #: Who this client is (F1). A stable id per install/device, a human label ("Gokhan's iPhone") and a
+    #: kind (``desktop`` | ``pwa`` | ``ios`` | ...). Self-declared; a proxy-supplied ``device`` handle on the
+    #: WebSocket upgrade overrides ``client_id`` (see ``tui_gateway/client_identity.py``). Absent = unknown.
+    client_id: str | None = None
+    label: str | None = None
+    kind: str | None = None
+
+
+class ClientIdentitySource(WireEnum):
+    device = "device"
+    declared = "declared"
+    none = "none"
 
 
 class ClientCapabilitiesResult(Result):
@@ -51,6 +63,10 @@ class ClientCapabilitiesResult(Result):
     #: one card per question. An older owner refuses the unknown key, so a client declares it only when
     #: this is true. (The legacy sidecar always asks the batch at once and is never sent the key.)
     canonical_clarify_batch: bool = False
+    #: The identity this backend recorded for the connection: ``device:<handle>`` when the upgrade carried a
+    #: trusted device handle, the declared id otherwise, ``unknown`` for a client that sent neither.
+    client_id: str = "unknown"
+    identity_source: ClientIdentitySource = ClientIdentitySource.none
 
 
 method("client.capabilities", params=ClientCapabilitiesParams, result=ClientCapabilitiesResult,

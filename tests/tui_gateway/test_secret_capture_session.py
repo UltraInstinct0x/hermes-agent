@@ -101,8 +101,10 @@ def test_secret_prompt_goes_to_active_turn_not_last_wired_session(monkeypatch):
                 server._sessions.pop(sid, None)
         server_requests.reset_for_tests()
 
-    assert [frame["method"] for frame in frames] == ["secret"]
-    assert frames[0]["params"]["session_id"] == "session-A"
+    # Besides the request itself, the answer is announced to the session's clients (request.resolved).
+    requests = [frame for frame in frames if (frame.get("params") or {}).get("type") != "request.resolved"]
+    assert [frame["method"] for frame in requests] == ["secret"]
+    assert requests[0]["params"]["session_id"] == "session-A"
     assert stored == [("DEMO_TOKEN", "owner-secret")]
     assert result == {"missing_names": [], "setup_skipped": False, "gateway_setup_hint": None}
     assert server_requests.open_requests("session-A") == []

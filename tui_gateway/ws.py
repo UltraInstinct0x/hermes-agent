@@ -16,7 +16,7 @@ import threading
 import time
 from typing import Any, Callable
 
-from tui_gateway import server
+from tui_gateway import client_identity, server
 from agent.message_sanitization import _sanitize_surrogates
 from tui_gateway.event_replay import replay_epoch
 from tui_gateway.transport import serialize_frame
@@ -416,10 +416,13 @@ class _SendFailed(Exception):
 
 
 async def handle_ws(ws: Any, *, auth_identity: dict | None = None, subprotocol: str | None = None,
-                    operator: bool = False) -> None:
+                    operator: bool = False,
+                    device_handle: str | None = None) -> None:
     """Run one WebSocket session. Wire-compatible with ``tui_gateway.entry``. *auth_identity* is the server-minted
     ``{user_id, provider}`` recorded at WS-upgrade auth, stored as ``WSTransport.auth_identity`` (the only identity
-    authority for session ownership and relay authorship); callers that omit it (harnesses, embedded TUI child) get None."""
+    authority for session ownership and relay authorship); callers that omit it (harnesses, embedded TUI child) get None.
+    *device_handle* is the proxy-supplied ``device`` query of the upgrade, the trusted source of the client id
+    (``client_identity.py``)."""
     peer, transport = _ws_peer_label(ws), None
     authority_connection = None
     messages = parse_errors = dispatch_crashes = send_failures = 0
@@ -635,6 +638,7 @@ async def handle_ws(ws: Any, *, auth_identity: dict | None = None, subprotocol: 
         _log.info("ws accepted peer=%s", peer)
         transport = WSTransport(ws, asyncio.get_running_loop(), peer=peer, auth_identity=auth_identity)
         authority_connection = _authority_connection(ws, transport, auth_identity, operator)
+        client_identity.bind_device_handle(transport, device_handle)
         # resolve_skin() is sync I/O + CPU; pooled so the read loop can drain the frontend's initial RPC burst.
         skin_payload = await asyncio.to_thread(server.resolve_skin)
         # change_events: this backend broadcasts pet/cron/sessions.changed, so clients can demote legacy

@@ -44,17 +44,21 @@ import uuid
 from typing import Any, Callable
 
 from tools.clarify_batch import settle_batch
+from tui_gateway import client_identity, human_requests
 
 logger = logging.getLogger(__name__)
 
 
 class ServerRequest:
     __slots__ = (
+        "answer_note",
         "answered",
         "created_at",
         "declined",
         "event",
+        "expires_at",
         "id",
+        "ledger",
         "locked",
         "method",
         "on_result",
@@ -67,7 +71,7 @@ class ServerRequest:
     )
 
     def __init__(self, sid: str, method: str, params: dict, *, qids: list[str] | None = None,
-                 on_result: Callable[[dict | None], None] | None = None) -> None:
+                 on_result: Callable[[dict | None], None] | None = None, timeout: float | None = None) -> None:
         self.id = f"srq-{uuid.uuid4().hex[:12]}"
         self.sid = sid
         self.method = method
@@ -76,6 +80,11 @@ class ServerRequest:
         self.result: dict | None = None
         self.answered = False
         self.created_at = time.time()
+        # Ledger bookkeeping (human_requests.py): the deadline when the sender owns the wait, the ledger entry
+        # of a human question, and who answered an approval over RPC (read when the queue settles it).
+        self.expires_at = self.created_at + timeout if timeout is not None and timeout > 0 else None
+        self.ledger: human_requests.LedgerEntry | None = None
+        self.answer_note: human_requests.AnswerNote | None = None
         # Batch clarify: question ids still to lock, and the answers locked so far.
         self.qids = list(qids) if qids else None
         self.locked: dict[str, str | None] = {}
@@ -113,6 +122,9 @@ _answerable: Callable[[str], bool] = lambda sid: True
 # ``clients(sid)``: the attached client transports that answer server→client requests — the set whose
 # unanimous NOT_SHOWN_CODE decline settles a window-owned request (session_transports.py).
 _clients: Callable[[str], list] = lambda sid: []
+# ``ledger_context(sid)``: ``{home, profile, session_id, session_key}`` of the session's profile, where its human
+# questions are recorded (human_requests.py); None leaves the ledger out (events are still emitted).
+_ledger_context: Callable[[str], dict | None] = lambda sid: None
 
 # Error code a client answers when none of its windows shows the request's session, and the refusal the
 # tool reports once every attached client said so. Mirrored in apps/desktop server-requests.ts.
@@ -126,11 +138,14 @@ _answering_clients: set = set()
 
 
 def bind_sinks(write_json: Callable[[dict], Any], emit: Callable[[str, str, dict], Any],
-               answerable: Callable[[str], bool], clients: Callable[[str], list] | None = None) -> None:
-    global _write, _emit, _answerable, _clients
+               answerable: Callable[[str], bool], clients: Callable[[str], list] | None = None,
+               ledger_context: Callable[[str], dict | None] | None = None) -> None:
+    global _write, _emit, _answerable, _clients, _ledger_context
     _write, _emit, _answerable = write_json, emit, answerable
     if clients is not None:
         _clients = clients
+    if ledger_context is not None:
+        _ledger_context = ledger_context
 
 
 def advertise(transport: Any, server_requests: bool) -> None:
@@ -165,6 +180,53 @@ def _emit_cancel(req: ServerRequest, reason: str) -> None:
     _emit("request.cancel", req.sid, {"id": req.id, "method": req.method, "reason": reason})
 
 
+def _identity(transport: Any) -> client_identity.ClientIdentity:
+    return client_identity.identity_for(transport) if transport is not None else client_identity.UNKNOWN
+
+
+def _ledger_settle(req: ServerRequest, state: str, **details: Any) -> None:
+    """Close *req* in the ledger and broadcast ``request.resolved`` when a person answered. Never called under
+    ``_lock``: it writes to the database."""
+    payload = human_requests.track_settle(req, state, **details)
+    if payload is None:
+        return
+    from tui_gateway.contracts.registry import ContractViolation
+
+    try:
+        _emit("request.resolved", req.sid, payload)
+    except ContractViolation:
+        raise  # our payload is wrong: loud under test isolation, logged by the emitter in production
+    except Exception:  # a broadcast that fails must never turn an accepted answer into a dispatch error
+        logger.warning("request.resolved for %s was not delivered", req.id, exc_info=True)
+
+
+def _withdrawal_state(reason: str) -> str:
+    """Ledger state of a queue-backed request the owner settled: a plain timeout is ``expired``, ``resolved`` means
+    another surface answered it, anything else (turn ended, session closed, client cannot answer) a withdrawal."""
+    if reason == "resolved":
+        return human_requests.ANSWERED
+    return human_requests.EXPIRED if reason == "timeout" else human_requests.WITHDRAWN
+
+
+def note_approval_answer(sid: str, request_id: str | None, choice: str, *, transport: Any = None,
+                         resolve_all: bool = False) -> None:
+    """Remember who answered an approval over ``approval.respond``: the choice reaches the agent's own queue,
+    not this module, so the request is later settled by the queue (``send_async``'s ``settle``) without an
+    answerer. The first note wins. *request_id* is the approval's own id (``params.request_id``); without one the
+    oldest open approval of *sid* is meant, or every one with *resolve_all*."""
+    note = human_requests.AnswerNote(_identity(transport), human_requests.VIA_APPROVAL_RESPOND, choice)
+    with _lock:
+        approvals = sorted((r for r in _open.values() if r.method == "approval"), key=lambda r: r.created_at)
+        if request_id:
+            targets = [r for r in approvals if r.params.get("request_id") == request_id]
+        else:
+            session_approvals = [r for r in approvals if r.sid == sid]
+            targets = session_approvals if resolve_all else session_approvals[:1]
+        for req in targets:
+            if req.answer_note is None:
+                req.answer_note = note
+
+
 def _register(req: ServerRequest) -> None:
     from tui_gateway.contracts import registry as contracts
 
@@ -174,6 +236,8 @@ def _register(req: ServerRequest) -> None:
     _, problem = contracts.validate_params(contract, {"session_id": req.sid, **req.params})
     if problem is not None:
         raise ValueError(problem)  # a key the renderer's typed handler would never read: our bug
+    # Recorded before the request is published and the frame leaves, so an instant answer finds its row.
+    req.ledger = human_requests.track_open(req, _ledger_context(req.sid))
     with _lock:
         req.writing = True
         _open[req.id] = req
@@ -199,7 +263,7 @@ def send(method: str, sid: str, params: dict, *, timeout: float | None,
     """
     if _unanswerable(method, sid):
         return None
-    req = ServerRequest(sid, method, params, qids=qids)
+    req = ServerRequest(sid, method, params, qids=qids, timeout=timeout)
     _register(req)
     try:
         req.event.wait(timeout)
@@ -211,6 +275,7 @@ def send(method: str, sid: str, params: dict, *, timeout: float | None,
             still_open = _open.pop(req.id, None) is req
         if still_open:
             _emit_cancel(req, "interrupted")
+            _ledger_settle(req, human_requests.CANCELLED, reason="interrupted")
         raise
     with _lock:
         # The verdict is the state committed under the lock, never wait()'s return value: a
@@ -222,6 +287,7 @@ def send(method: str, sid: str, params: dict, *, timeout: float | None,
         return result
     if timed_out:
         _emit_cancel(req, "timeout")
+        _ledger_settle(req, human_requests.EXPIRED, reason="timeout")
         if req.qids is not None:
             return settle_batch(locked, ended="timed_out")
     return None
@@ -242,6 +308,8 @@ def send_async(method: str, sid: str, params: dict, on_result: Callable[[dict | 
             still_open = _open.pop(req.id, None) is not None
         if still_open:
             _emit_cancel(req, reason)
+            state = _withdrawal_state(reason)
+            _ledger_settle(req, state, reason=None if state == human_requests.ANSWERED else reason)
 
     return settle
 
@@ -275,13 +343,15 @@ def _decline(rid: str, transport: Any) -> bool:
     if req.on_result is not None:
         req.on_result(req.result)
     req.event.set()
+    _ledger_settle(req, human_requests.WITHDRAWN, reason="not_shown")
     return True
 
 
-def resolve_response(frame: dict, transport: Any = None) -> bool:
+def resolve_response(frame: dict, transport: Any = None, *, via: str = human_requests.VIA_FRAME) -> bool:
     """Route one client response frame to its open request. False when nothing is waiting for that id
     (already timed out / cancelled, or owned by another process — see the compute-host bridge).
-    *transport* is the client connection the frame arrived on (counts a NOT_SHOWN_CODE decline)."""
+    *transport* is the client connection the frame arrived on (counts a NOT_SHOWN_CODE decline, and names
+    the answerer in the ledger); *via* is how the answer reached us (``frame`` or the ``request.answer`` RPC)."""
     rid = frame.get("id")
     if not isinstance(rid, str):
         return False
@@ -313,13 +383,18 @@ def resolve_response(frame: dict, transport: Any = None) -> bool:
     if req.on_result is not None:
         req.on_result(req.result)
     req.event.set()
+    if req.answered:
+        _ledger_settle(req, human_requests.ANSWERED, by=_identity(transport), via=via, result=req.result)
+    else:  # the client answered with an error (no handler for this method): nobody decided anything
+        _ledger_settle(req, human_requests.WITHDRAWN, reason="client_error")
     return True
 
 
-def lock_answer(request_id: str, question_id: str, answer: str | None) -> list[str] | None:
+def lock_answer(request_id: str, question_id: str, answer: str | None, *, transport: Any = None) -> list[str] | None:
     """Lock one batch-clarify answer (update-in-place; ``None`` = skipped). Returns the question ids
     still unanswered; the last lock resolves the request with the full ``{"answers"}`` set. ``None``
-    when no open batch has that id (expired or foreign); ``ValueError`` for an unknown question id."""
+    when no open batch has that id (expired or foreign); ``ValueError`` for an unknown question id.
+    *transport* is the connection that locked it (names the answerer in the ledger)."""
     with _lock:
         req = _open.get(request_id)
         if req is None or req.qids is None:
@@ -333,6 +408,10 @@ def lock_answer(request_id: str, question_id: str, answer: str | None) -> list[s
             _open.pop(request_id, None)
     if not remaining:
         req.event.set()
+    by = _identity(transport)
+    human_requests.track_lock(req, question_id, answer, by)
+    if not remaining:
+        _ledger_settle(req, human_requests.ANSWERED, by=by, via=human_requests.VIA_CLARIFY_LOCK, result=req.result)
     return remaining
 
 
@@ -359,6 +438,7 @@ def cancel(sid: str | None = None, reason: str = "interrupted", *, method: str |
         req.event.set()
         if req.id in announced:
             _emit_cancel(req, reason)
+        _ledger_settle(req, human_requests.CANCELLED, reason=reason)
     return len(targets)
 
 
