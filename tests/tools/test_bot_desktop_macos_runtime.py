@@ -88,6 +88,37 @@ def test_status_reports_supported_installed_running_truthfully(tmp_path, monkeyp
     assert runtime.rfb_socket_path() == tmp_path / "rfb.sock" and runtime.is_running()
 
 
+@pytest.mark.parametrize("configured,effective", [
+    (None, "ask"), ("ask", "ask"), ("allow", "allow"), ("deny", "deny"), ("Allow", "allow"), ("nonsense", "ask"), (True, "ask"),
+])
+def test_status_reports_the_effective_consent_mode(monkeypatch, configured, effective):
+    monkeypatch.setattr(runtime, "_mac_backend", lambda: True)
+    monkeypatch.setattr(mac, "probe", lambda **kw: mac.Probe(True, True))
+    monkeypatch.setattr(runtime.placement, "resolve", lambda: runtime.placement.Placement("gateway", "local"))
+    monkeypatch.setattr(mac, "_cfg", lambda: {} if configured is None else {"mac_consent": configured})
+    assert runtime.status().consent == effective
+    assert runtime.status().as_dict()["consent"] == effective
+
+
+def test_the_session_child_receives_the_effective_mode(monkeypatch):
+    monkeypatch.setattr(mac, "_cfg", lambda: {"mac_consent": "allow"})
+    monkeypatch.setattr(mac._preflight, "with_parent_site_packages", lambda env: env)
+    monkeypatch.setattr("tools.environments.local.served_profile_child_env", lambda **kw: {})
+    assert mac._server_env()["HERMES_BD_MAC_CONSENT"] == "allow"
+    monkeypatch.setattr(mac, "_cfg", lambda: {"mac_consent": "bogus"})
+    assert mac._server_env()["HERMES_BD_MAC_CONSENT"] == "ask"
+
+
+def test_a_policy_refusal_is_a_calm_sentence(tmp_path, monkeypatch, _startable):
+    def popen(argv, **kw):
+        (tmp_path / "consent").write_text("policy", encoding="utf-8")
+        return _Proc(999999, code=3)
+    monkeypatch.setattr(mac.subprocess, "Popen", popen)
+    with pytest.raises(RuntimeError, match="never share") as exc:
+        mac.start()
+    assert "—" not in str(exc.value)
+
+
 def test_unsupported_mac_status_carries_the_reason_as_the_blocker(monkeypatch):
     monkeypatch.setattr(runtime, "_mac_backend", lambda: True)
     monkeypatch.setattr(runtime.placement, "resolve", lambda: runtime.placement.Placement("gateway", "local"))

@@ -42,9 +42,10 @@ def state():
 class _Running:
     """A Session on a thread. ``code`` is its exit code once it ended."""
 
-    def __init__(self, state, cua, consent_fn=ALLOW, grace=60.0, notices=None, **kw):
+    def __init__(self, state, cua, consent_fn=ALLOW, grace=60.0, notices=None, consent_mode="ask", **kw):
         self.notices = notices if notices is not None else []
-        self.session = server.Session(state, cua, server.Settings(viewer_grace_s=grace, max_fps=50, profile="skynet"),
+        self.session = server.Session(state, cua, server.Settings(viewer_grace_s=grace, max_fps=50, profile="skynet",
+                                                      consent_mode=consent_mode),
                                       consent_fn=consent_fn, notify_fn=self.notices.append, **kw)
         self.code = None
         self.thread = threading.Thread(target=lambda: setattr(self, "code", self.session.run()), daemon=True)
@@ -108,6 +109,74 @@ def test_a_window_list_that_cannot_be_read_refuses_to_start(state):
     run = _Running(state, cua)
     run.thread.join(5)
     assert run.code == server.EXIT_NO_CAPTURE and not (state / "rfb.sock").exists()
+
+
+def _must_not_ask(summary, timeout_s=30):
+    raise AssertionError("the native dialog must not be shown in this mode")
+
+
+def test_ask_is_the_default_and_still_shows_the_dialog(state):
+    assert server.Settings().consent_mode == "ask" and server.Settings.from_env({}).consent_mode == "ask"
+    seen = []
+    run = _Running(state, FakeCua(), consent_fn=lambda summary, timeout_s: seen.append(summary) or consent.Consent(True, "allowed"))
+    run.wait_serving()
+    run.finish()
+    assert len(seen) == 1 and run.audit()[1]["reason"] == "allowed" and run.audit()[1]["mode"] == "ask"
+
+
+def test_allow_skips_the_dialog_and_audits_auto_allow(state):
+    run = _Running(state, FakeCua(), consent_fn=_must_not_ask, consent_mode="allow")
+    run.wait_serving()
+    run.finish()
+    line = run.audit()[1]
+    assert line["event"] == "consent" and line["allowed"] is True
+    assert line["reason"] == "auto_allow" and line["mode"] == "allow"
+    assert _events(run)[:3] == ["session_requested", "consent", "serving"]
+
+
+def test_deny_refuses_without_a_dialog_and_never_captures(state):
+    cua = FakeCua()
+    run = _Running(state, cua, consent_fn=_must_not_ask, consent_mode="deny")
+    run.thread.join(5)
+    assert run.code == server.EXIT_DENIED and cua.captures == 0 and not (state / "rfb.sock").exists()
+    assert (state / "consent").read_text() == "policy"
+    assert run.audit()[1]["allowed"] is False and run.audit()[1]["mode"] == "deny"
+
+
+@pytest.mark.parametrize("raw", ["", "maybe", "ALLOWED", None, 7])
+def test_an_unknown_mode_falls_back_to_ask(state, raw):
+    assert consent.normalize_mode(raw) == "ask"
+    env = {} if raw is None else {"HERMES_BD_MAC_CONSENT": str(raw)}
+    assert server.Settings.from_env(env).consent_mode == "ask"
+    seen = []
+    run = _Running(state, FakeCua(), consent_fn=lambda summary, timeout_s: seen.append(1) or consent.Consent(False, "denied"),
+                   consent_mode=str(raw))
+    run.thread.join(5)
+    assert seen == [1] and run.code == server.EXIT_DENIED
+
+
+def test_modes_are_read_case_insensitively_from_the_environment():
+    assert server.Settings.from_env({"HERMES_BD_MAC_CONSENT": " Allow "}).consent_mode == "allow"
+    assert server.Settings.from_env({"HERMES_BD_MAC_CONSENT": "deny"}).consent_mode == "deny"
+
+
+def test_allow_mode_keeps_the_banner_the_deny_list_and_the_audit_trail(state):
+    windows = [{"app_name": "Messages", "bounds": {"x": 0, "y": 0, "width": 50, "height": 50}, "is_on_screen": True}]
+    run = _Running(state, FakeCua(windows=windows), consent_fn=_must_not_ask, consent_mode="allow")
+    run.wait_serving()
+
+    async def go():
+        v = await _Viewer.connect(state / "rfb.sock")
+        await v.request()
+        (x, y, w, h, enc, data), = await v.read_update()
+        img = _decode_zrle(__import__("struct").pack(">HHHHiI", x, y, w, h, enc, len(data)) + data, v.fmt, v.z, v.size)
+        v.close()
+        return img
+    img = asyncio.run(go())
+    assert img.getpixel((10, 10)) == (0, 0, 0) and img.getpixel((300, 200)) == (30, 60, 90)
+    run.finish()
+    assert "viewer_attached" in _events(run) and _events(run)[-1] == "session_end"
+    assert any("shown in Hermes" in n for n in run.notices)
 
 
 # ── serving ───────────────────────────────────────────────────────────────────────────────────────────

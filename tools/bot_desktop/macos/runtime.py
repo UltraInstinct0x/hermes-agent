@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from tools.bot_desktop import runtime as _rt
-from tools.bot_desktop.macos import idle as _idle, preflight as _preflight
+from tools.bot_desktop.macos import consent as _consent, idle as _idle, preflight as _preflight
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,7 @@ DEFAULT_APP = "/Applications/CuaDriver.app/Contents/MacOS/cua-driver"
 _REFUSALS = {
     "denied": "The person at the Mac declined to share the screen.",
     "timeout": "Nobody answered the prompt on the Mac, so the screen was not shared.",
+    "policy": "This Mac is set to never share its screen (bot_desktop.mac_consent: deny).",
     "unavailable": "The Mac could not show its permission prompt (is anyone logged in at the Mac?), so the screen "
                    "was not shared.",
 }
@@ -148,6 +149,14 @@ def _cfg() -> dict[str, Any]:
     return cfg if isinstance(cfg, dict) else {}
 
 
+def consent_mode() -> str:
+    """The effective ``bot_desktop.mac_consent``: ask | allow | deny. Unknown values and read errors mean ask."""
+    try:
+        return _consent.normalize_mode(_cfg().get("mac_consent"))
+    except Exception:
+        return _consent.DEFAULT_MODE
+
+
 def present_within_seconds() -> float:
     try:
         return float(_cfg().get("mac_present_seconds", _idle.DEFAULT_PRESENT_WITHIN_S))
@@ -171,6 +180,8 @@ def _server_env() -> dict[str, str]:
         env["HERMES_BD_MAC_CAPTURE"] = str(cfg["mac_capture"])
     if isinstance(cfg.get("mac_deny_apps"), list):
         env["HERMES_BD_MAC_DENY"] = json.dumps([str(x) for x in cfg["mac_deny_apps"]])
+    if "mac_consent" in cfg:  # absent means the server's own default, ask
+        env["HERMES_BD_MAC_CONSENT"] = _consent.normalize_mode(cfg["mac_consent"])
     if cfg.get("mac_viewer_grace_seconds"):
         env["HERMES_BD_MAC_GRACE_S"] = str(cfg["mac_viewer_grace_seconds"])
     # Only the parent's site-packages dirs are added; the gateway may be an isolated interpreter whose venv is
@@ -214,6 +225,7 @@ def status(profile: Optional[str] = None) -> "_rt.DesktopStatus":
         install_command=None if p.installed else "hermes computer-use install",
         browser=None,
         blocker=None if p.supported or running else p.reason,
+        consent=consent_mode(),
     )
 
 

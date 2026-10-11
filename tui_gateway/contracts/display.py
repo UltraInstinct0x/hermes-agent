@@ -76,6 +76,9 @@ class DisplayStatus(Result):
     memory_limit_mb: int | None = None
     placement: str = "gateway"  # "gateway" | "terminal:<backend>" — where Xvnc runs (bot_desktop.placement)
     image_switch: DisplayImageSwitch | None = None  # a default-image switch the pane may approve (docker placement)
+    # Mac only: who decides a viewing session. "ask" waits for a click on the Mac, "allow" starts without a prompt
+    # (clients must not show "waiting for you to allow this"), "deny" never shares. Absent on other hosts.
+    consent: str | None = None
     lease: DisplayLease
     profile_key: str
 
