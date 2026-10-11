@@ -769,6 +769,46 @@ CREATE INDEX IF NOT EXISTS idx_session_model_usage_session ON session_model_usag
 CREATE INDEX IF NOT EXISTS idx_session_model_usage_model ON session_model_usage(model);
 CREATE INDEX IF NOT EXISTS idx_async_delegations_delivery
     ON async_delegations(delivery_state, completed_at);
+
+-- Durable ledger of questions the agent put to a human (approvals, clarifications, sudo/secret prompts),
+-- written by tui_gateway/human_requests.py. ``state``: open | answered | expired | withdrawn | cancelled |
+-- lost_on_restart. Rows of the secret kinds (sudo, secret) carry no prompt, choices or answer text.
+CREATE TABLE IF NOT EXISTS human_requests (
+    request_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    profile TEXT NOT NULL DEFAULT '',
+    bot_key TEXT,
+    session_id TEXT,
+    session_key TEXT,
+    call_id TEXT,
+    prompt TEXT,
+    choices_json TEXT,
+    state TEXT NOT NULL,
+    outcome TEXT,
+    cancel_reason TEXT,
+    created_at REAL NOT NULL,
+    expires_at REAL,
+    answered_at REAL,
+    answered_by_client_id TEXT,
+    answered_by_kind TEXT,
+    answered_by_label TEXT,
+    answered_via TEXT,
+    gateway_epoch TEXT,
+    owner_pid INTEGER
+);
+
+-- Batch-clarify answer locks, append-only (one row per lock; the newest per question wins).
+CREATE TABLE IF NOT EXISTS human_request_answers (
+    request_id TEXT NOT NULL,
+    question_id TEXT NOT NULL,
+    answer TEXT,
+    client_id TEXT,
+    locked_at REAL NOT NULL,
+    PRIMARY KEY (request_id, question_id, locked_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_human_requests_state ON human_requests(state, created_at);
+CREATE INDEX IF NOT EXISTS idx_human_requests_session ON human_requests(session_id, created_at);
 """
 
 # Indexes on later-added columns must run AFTER _reconcile_columns(), or executescript fails on legacy DBs.
