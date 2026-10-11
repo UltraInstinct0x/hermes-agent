@@ -16989,6 +16989,11 @@
             ],
             "default": null,
             "title": "Reason"
+          },
+          "confirm_user_present": {
+            "default": false,
+            "title": "Confirm User Present",
+            "type": "boolean"
           }
         },
         "required": [
@@ -18067,6 +18072,11 @@
             ],
             "default": null,
             "title": "Reason"
+          },
+          "confirm_user_present": {
+            "default": false,
+            "title": "Confirm User Present",
+            "type": "boolean"
           }
         },
         "required": [
