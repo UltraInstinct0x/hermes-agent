@@ -162,6 +162,9 @@ method("display.install", params=ProfileParams, result=DisplayInstallResult,
 class DisplayLeaseAcquireParams(ProfileParams):
     viewer_id: str
     reason: str | None = None
+    # Mac hosts only: repeat the call with true after the calm "someone is using this Mac" refusal (data.code
+    # mac_user_present). Ignored everywhere else.
+    confirm_user_present: bool = False
 
 
 class DisplayLeaseResult(Result):
@@ -175,6 +178,7 @@ method("display.lease.acquire", params=DisplayLeaseAcquireParams, result=Display
 class DisplayTakeParams(ProfileParams):
     viewer_id: str  # the id THIS connection minted via display.observe (stable for an identified client)
     reason: str | None = None
+    confirm_user_present: bool = False  # Mac hosts only, see DisplayLeaseAcquireParams
 
 
 class DisplayTakeResult(Result):

@@ -189,3 +189,20 @@ def disable_lazy_stt_install():
     """
     with patch("tools.transcription_tools._try_lazy_install_stt", return_value=False):
         yield
+
+
+@pytest.fixture(autouse=True)
+def _bot_desktop_is_linux_unless_testing_the_mac(request, monkeypatch):
+    """The Linux Bot Desktop tests assume the Linux runtime. On a Mac host the runtime dispatches to the cua-driver
+    backend (which would raise a native consent prompt), so pin it off; the Mac tests opt in explicitly."""
+    name = request.module.__name__
+    if "macos" in name or "mac_take_control" in name:
+        yield
+        return
+    try:
+        from tools.bot_desktop import runtime
+    except Exception:  # a test module that stubs the import graph: nothing to pin
+        yield
+        return
+    monkeypatch.setattr(runtime, "_mac_backend", lambda: False)
+    yield

@@ -214,6 +214,9 @@ def _(rid, params: dict) -> dict:
     ``display.install.done``. Refused while one is already running for this profile."""
     from hermes_constants import hermes_home_key
     from tools.bot_desktop import install as _bd_install, runtime as _bd_runtime
+    if _bd_runtime._mac_backend():
+        return _err(rid, _DISPLAY_ERR, _bd_runtime.status().blocker
+                    or "Nothing to install: Bot Screen on this Mac uses cua-driver, which is already set up")
     if not _bd_runtime.is_supported_host():
         return _err(rid, _DISPLAY_ERR, "Bot Desktop runs on Linux gateway hosts only")
     if _bd_runtime.in_sandbox():
@@ -269,8 +272,20 @@ def _(rid, params: dict) -> dict:
     # that reads the new lease against the old stamp takes it for an abandoned one and stops the screen under
     # the human who just took it.
     _bd_runtime.touch_activity()
+    if (present := _mac_user_present(viewer_id, params)) is not None:
+        return _err(rid, _DISPLAY_ERR, present["message"], data=present)
     lease = _bd_lease.acquire(viewer_id, reason=str(params.get("reason") or ""), **_holder_identity())
     return _ok(rid, {"lease": _bd_lease.public_view(lease)})
+
+
+def _mac_user_present(viewer_id: str, params: dict):
+    """On a Mac host, take-control moves the real cursor and focus: when somebody used the Mac a moment ago,
+    refuse once with a calm sentence (``data.code == "mac_user_present"``) until the client repeats the call with
+    ``confirm_user_present: true``. None when the gate does not apply or the caller already holds control."""
+    from tools.bot_desktop import lease as _bd_lease, runtime as _bd_runtime
+    if not _bd_runtime._mac_backend() or _bd_lease.viewer_may_send_input(viewer_id):
+        return None
+    return _bd_runtime._mac().take_control_gate(bool(params.get("confirm_user_present")))
 
 
 def _holder_identity() -> dict:
@@ -297,6 +312,8 @@ def _(rid, params: dict) -> dict:
     if (refused := _foreign_viewer_id(rid, viewer_id)) is not None:
         return refused
     _bd_runtime.touch_activity()  # a takeover is use (same as display.lease.acquire), stamped before the write
+    if (present := _mac_user_present(viewer_id, params)) is not None:
+        return _err(rid, _DISPLAY_ERR, present["message"], data=present)
     epoch_before = _bd_lease.get().epoch
     lease = _bd_lease.acquire(viewer_id, reason=str(params.get("reason") or ""), **_holder_identity())
     if lease.epoch == epoch_before:  # already theirs: nothing changed hands, nothing to announce
