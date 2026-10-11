@@ -158,6 +158,8 @@ class ProfileRow(Result):
     provider: str | None = None
     description: str = ""
     display_name: str = ""
+    # Bot Mode title (``profile.yaml`` ui_meta['hermes-bots'].title): the name the Bots roster shows.
+    bot_title: str | None = None
     skill_count: int = 0
     previous_names: list[str] = Field(default_factory=list)
     last_session: ProfileSessionPreview | None = None
