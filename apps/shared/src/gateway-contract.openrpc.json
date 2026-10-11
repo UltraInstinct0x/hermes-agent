@@ -2995,6 +2995,42 @@
       }
     },
     {
+      "name": "request.history",
+      "summary": "Newest-first page of the human-request ledger (retention 90 days).",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/RequestHistoryParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RequestHistoryResult"
+        }
+      }
+    },
+    {
+      "name": "request.list",
+      "summary": "Every request a live gateway still waits on across ALL sessions of the profile, plus the most recent closed ones. open_count is what a restart guard asks before restarting.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/RequestListParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RequestListResult"
+        }
+      }
+    },
+    {
       "name": "rollback.diff",
       "summary": "Diff between a checkpoint and the working tree, with an ANSI rendering sized to the TUI.",
       "params": [
@@ -5193,6 +5229,45 @@
           }
         },
         "title": "AgentsListResult",
+        "type": "object"
+      },
+      "AnsweredBy": {
+        "additionalProperties": false,
+        "description": "Who answered. ``client_id`` is ``unknown`` for a client that never identified itself, and for an answer given\non a surface that does not reach this gateway (Telegram, CLI).",
+        "properties": {
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kind"
+          }
+        },
+        "required": [
+          "client_id"
+        ],
+        "title": "AnsweredBy",
         "type": "object"
       },
       "AppActionRequestParams": {
@@ -11753,6 +11828,42 @@
             "default": false,
             "title": "Desktop Local",
             "type": "boolean"
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Client Id"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kind"
           }
         },
         "title": "ClientCapabilitiesParams",
@@ -11772,6 +11883,15 @@
             "default": false,
             "title": "Declines Not Shown",
             "type": "boolean"
+          },
+          "client_id": {
+            "default": "unknown",
+            "title": "Client Id",
+            "type": "string"
+          },
+          "identity_source": {
+            "$ref": "#/components/schemas/ClientIdentitySource",
+            "default": "none"
           }
         },
         "required": [
@@ -11779,6 +11899,15 @@
         ],
         "title": "ClientCapabilitiesResult",
         "type": "object"
+      },
+      "ClientIdentitySource": {
+        "enum": [
+          "device",
+          "declared",
+          "none"
+        ],
+        "title": "ClientIdentitySource",
+        "type": "string"
       },
       "ClipboardPasteParams": {
         "additionalProperties": false,
@@ -20558,6 +20687,228 @@
         ],
         "title": "HeartbeatSnapshot",
         "type": "object"
+      },
+      "HumanRequestKind": {
+        "enum": [
+          "approval",
+          "clarify",
+          "sudo",
+          "secret",
+          "other"
+        ],
+        "title": "HumanRequestKind",
+        "type": "string"
+      },
+      "HumanRequestRow": {
+        "additionalProperties": false,
+        "description": "One ledger row. ``session_id`` is the stored (durable) session id; the request id is what ``request.answer``\ntakes. ``answers`` is clarify only (newest lock per question); sudo and secret rows have no prompt, choices or\nanswers.",
+        "properties": {
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/HumanRequestKind"
+          },
+          "profile": {
+            "title": "Profile",
+            "type": "string"
+          },
+          "bot_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bot Key"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Session Id"
+          },
+          "session_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Session Key"
+          },
+          "call_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Call Id"
+          },
+          "prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Prompt"
+          },
+          "choices": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Choices"
+          },
+          "state": {
+            "$ref": "#/components/schemas/HumanRequestState"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Outcome"
+          },
+          "cancel_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cancel Reason"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "number"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expires At"
+          },
+          "answered_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Answered At"
+          },
+          "answered_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnsweredBy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "answered_via": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Answered Via"
+          },
+          "answers": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Answers"
+          }
+        },
+        "required": [
+          "request_id",
+          "kind",
+          "profile",
+          "state",
+          "created_at"
+        ],
+        "title": "HumanRequestRow",
+        "type": "object"
+      },
+      "HumanRequestState": {
+        "enum": [
+          "open",
+          "answered",
+          "expired",
+          "withdrawn",
+          "cancelled",
+          "lost_on_restart"
+        ],
+        "title": "HumanRequestState",
+        "type": "string"
       },
       "I18nCatalogParams": {
         "additionalProperties": false,
@@ -33316,6 +33667,256 @@
           "reason"
         ],
         "title": "RequestCancelPayload",
+        "type": "object"
+      },
+      "RequestHistoryParams": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Session Id"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HumanRequestKind"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "states": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/HumanRequestState"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "States"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limit"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Before"
+          }
+        },
+        "title": "RequestHistoryParams",
+        "type": "object"
+      },
+      "RequestHistoryResult": {
+        "additionalProperties": false,
+        "properties": {
+          "requests": {
+            "items": {
+              "$ref": "#/components/schemas/HumanRequestRow"
+            },
+            "title": "Requests",
+            "type": "array"
+          },
+          "next_before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Before"
+          }
+        },
+        "title": "RequestHistoryResult",
+        "type": "object"
+      },
+      "RequestListParams": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
+          "answered_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Answered Limit"
+          }
+        },
+        "title": "RequestListParams",
+        "type": "object"
+      },
+      "RequestListResult": {
+        "additionalProperties": false,
+        "properties": {
+          "open": {
+            "items": {
+              "$ref": "#/components/schemas/HumanRequestRow"
+            },
+            "title": "Open",
+            "type": "array"
+          },
+          "recent": {
+            "items": {
+              "$ref": "#/components/schemas/HumanRequestRow"
+            },
+            "title": "Recent",
+            "type": "array"
+          },
+          "open_count": {
+            "title": "Open Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "open_count"
+        ],
+        "title": "RequestListResult",
+        "type": "object"
+      },
+      "RequestResolvedPayload": {
+        "additionalProperties": false,
+        "description": "Emitted when a request was answered (by any client, or on another surface), to the clients attached to\nthe session, answerer included (the id lets a client dedupe). ``choice`` is the approval decision, ``answers``\nthe clarify answers (clipped); both are null for sudo and secret.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/HumanRequestKind"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Outcome"
+          },
+          "choice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Choice"
+          },
+          "answers": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Answers"
+          },
+          "answered_by": {
+            "$ref": "#/components/schemas/AnsweredBy"
+          },
+          "at": {
+            "title": "At",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "method",
+          "kind",
+          "session_id",
+          "answered_by",
+          "at"
+        ],
+        "title": "RequestResolvedPayload",
         "type": "object"
       },
       "ResumeFallback": {
@@ -49688,6 +50289,18 @@
           "name": "payload",
           "schema": {
             "$ref": "#/components/schemas/RequestCancelPayload"
+          }
+        }
+      ]
+    },
+    {
+      "name": "request.resolved",
+      "summary": "A server\u2192client request was answered; says who and with what. request.cancel (reason resolved) still follows for approvals answered over RPC.",
+      "params": [
+        {
+          "name": "payload",
+          "schema": {
+            "$ref": "#/components/schemas/RequestResolvedPayload"
           }
         }
       ]
