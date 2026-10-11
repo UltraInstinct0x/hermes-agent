@@ -78,7 +78,21 @@ def state_dir() -> Path:
 
 
 def is_supported_host() -> bool:
-    return sys.platform.startswith("linux")
+    """Linux always (Xvnc + Xfce); macOS only when cua-driver and its Accessibility + Screen Recording grants are
+    present (``macos.runtime.probe`` says exactly what is missing; ``status().blocker`` carries it)."""
+    if sys.platform.startswith("linux"):
+        return True
+    return _mac_backend() and _mac().probe().supported
+
+
+def _mac():
+    from tools.bot_desktop.macos import runtime as mac_runtime
+    return mac_runtime
+
+
+def _mac_backend() -> bool:
+    """True when this process hosts the screen on a Mac itself (the real primary display, via cua-driver)."""
+    return sys.platform == "darwin" and placement.resolve().where == placement.GATEWAY
 
 
 def missing_binaries() -> list[str]:
@@ -401,6 +415,8 @@ def tool_placement() -> str:
 
 
 def _should_auto_start(env: dict[str, str]) -> bool:
+    if sys.platform == "darwin":
+        return False  # a Mac session needs the person at the Mac to say yes: never started silently
     if not is_supported_host() or env.get("DISPLAY") or env.get("WAYLAND_DISPLAY"):
         return False
     if missing_binaries():
@@ -473,6 +489,8 @@ def published_env() -> dict[str, str]:
     from tools.bot_desktop import sandbox_host
     if sandbox_host._read_marker():
         return _sandbox_published_env()
+    if _mac_backend():
+        return {}  # the Mac screen is the real display: no DISPLAY / XAUTHORITY for children to inherit
     if _launcher_pid() is None:
         return {}
     raw = _read(state_dir() / "env")
@@ -492,6 +510,8 @@ def rfb_socket_path() -> Optional[Path]:
     from tools.bot_desktop import sandbox_host
     if sandbox_host._read_marker():
         return None
+    if _mac_backend():
+        return _mac().rfb_socket_path()
     sock = state_dir() / "rfb.sock"
     return sock if _launcher_pid() is not None and sock.exists() else None
 
@@ -537,6 +557,8 @@ def _owned_sandbox_env():
 
 
 def is_running() -> bool:
+    if _mac_backend():
+        return _mac().is_running()
     return bool(published_env().get("DISPLAY"))
 
 
@@ -564,6 +586,8 @@ def status(profile: Optional[str] = None) -> DesktopStatus:
         # A screen already running inside a sandbox is reported (and stoppable) even after the placement
         # setting moved: the recorded owner wins over the current policy until it is stopped.
         return _sandbox_status(profile, where)
+    if _mac_backend():
+        return _mac().status(profile)
     missing: list[str] = missing_binaries() if is_supported_host() else list(REQUIRED_BINARIES)
     pid = _launcher_pid()
     env = published_env()
@@ -669,8 +693,10 @@ def start(*, wait_seconds: float = 15.0) -> DesktopStatus:
         raise RuntimeError(where.reason)
     if where.where == placement.TERMINAL:
         return _start_in_sandbox(wait_seconds)
+    if _mac_backend():
+        return _mac().start(wait_seconds=wait_seconds)
     if not is_supported_host():
-        raise RuntimeError("Bot Desktop runs on Linux gateway hosts only")
+        raise RuntimeError("Bot Desktop runs on Linux and macOS gateway hosts only")
     missing = missing_binaries()
     if missing:
         # Three dead ends: an operator told "unprivileged, no sudo" while running as root hunts the wrong bug.
@@ -822,6 +848,8 @@ def stop() -> bool:
         for name in ("env", "activity"):
             (state_dir() / name).unlink(missing_ok=True)
         return stopped
+    if _mac_backend():
+        return _mac().stop()
     if not is_supported_host():
         return False
     sd = state_dir()
