@@ -14,6 +14,17 @@ from typing import Callable, Optional
 TIMEOUT_S = 30
 TITLE = "Hermes Bot Screen"
 
+# ``bot_desktop.mac_consent``: ask (a dialog every session, the default) | allow (no dialog, for a Mac used only
+# remotely; removes the human check) | deny (never share, no dialog).
+MODES = ("ask", "allow", "deny")
+DEFAULT_MODE = "ask"
+
+
+def normalize_mode(value: object) -> str:
+    """Any unknown or malformed value falls back to ``ask``, the safe default."""
+    text = str(value).strip().lower() if isinstance(value, str) else ""
+    return text if text in MODES else DEFAULT_MODE
+
 
 @dataclass(frozen=True)
 class Consent:
