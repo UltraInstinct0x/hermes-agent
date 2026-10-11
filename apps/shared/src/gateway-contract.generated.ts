@@ -1522,6 +1522,7 @@ export interface DisplayLeaseAcquireParams {
   profile?: string | null
   viewer_id: string
   reason?: string | null
+  confirm_user_present?: boolean
 }
 export interface DisplayLeaseResult {
   lease: DisplayLease
@@ -1530,6 +1531,7 @@ export interface DisplayTakeParams {
   profile?: string | null
   viewer_id: string
   reason?: string | null
+  confirm_user_present?: boolean
 }
 export interface DisplayTakeResult {
   lease: DisplayLease
