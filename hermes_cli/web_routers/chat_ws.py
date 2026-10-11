@@ -690,6 +690,8 @@ async def gateway_ws(ws: WebSocket) -> None:
         auth_identity=identity,
         operator=True,  # The dashboard upgrade gate above has verified this operator.
         subprotocol=getattr(ws, "_hermes_ws_subprotocol", None),
+        # Appended by a fronting proxy that authenticated a paired device; shape-checked in handle_ws.
+        device_handle=ws.query_params.get("device"),
     )
 
 
