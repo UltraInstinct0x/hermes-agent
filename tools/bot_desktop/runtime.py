@@ -161,6 +161,7 @@ class DesktopStatus:
     memory_limit_mb: Optional[int] = None
     placement: str = "gateway"  # "gateway" | "terminal:<backend>" — where Xvnc runs
     image_switch: Optional[dict[str, object]] = None  # pending default-image switch the pane can approve
+    consent: Optional[str] = None  # Mac only: "ask" | "allow" | "deny" (bot_desktop.mac_consent); None elsewhere
 
     def as_dict(self) -> dict[str, object]:
         return dict(self.__dict__)
