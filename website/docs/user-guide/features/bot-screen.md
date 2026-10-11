@@ -361,6 +361,36 @@ true`) and no display is available.
 State lives under `<HERMES_HOME>/bot-desktop/` per profile (RFB Unix socket,
 Xauthority, launcher log, per-profile xfconf).
 
+### Mac consent (`bot_desktop.mac_consent`)
+
+On a Mac gateway, every viewing session normally opens a native dialog on the Mac and waits for a click on
+**Allow**. If you only ever use that Mac remotely, nobody can click it, so you can change who decides:
+
+```yaml
+bot_desktop:
+  mac_consent: ask   # ask (default) | allow | deny
+```
+
+- `ask`: the dialog appears for every session. Anything but a clear Allow is a no. This is the default, and any
+  unknown value behaves like `ask`.
+- `allow`: no dialog; the session is allowed automatically and the audit log records the consent as `auto_allow`.
+- `deny`: never share the screen and never show a dialog.
+
+The mode is read when a session starts, so a change applies to the next session. `display.status` reports the
+effective mode as `consent`; clients show "Waiting for you to allow this on the Mac" only when it is `ask`.
+
+:::warning
+`allow` removes the human check. Anything that can pair with this gateway or reach it over your tailnet can then
+view the Mac's main display without anybody at the Mac agreeing. Use it only on a Mac that only you can reach.
+:::
+
+`allow` does not change the other guards: only authenticated paired or tailnet clients reach the display socket,
+deny-listed windows (password managers, Messages, Keychain Access) are still masked, every session still writes
+`bot-desktop/audit.log`, a Notification Center banner still appears when a viewer attaches and when control is
+taken, Take control still asks for a second confirmation when somebody used the Mac a moment ago
+(`bot_desktop.mac_present_seconds`), and a session still ends after 120 s without a viewer
+(`bot_desktop.mac_viewer_grace_seconds`).
+
 ## How it works
 
 - **TigerVNC `Xvnc`** is the X server and the RFB server in one process, per
