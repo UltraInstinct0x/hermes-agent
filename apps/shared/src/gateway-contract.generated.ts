@@ -1362,6 +1362,7 @@ export interface DisplayStatus {
   memory_limit_mb?: number | null
   placement?: string
   image_switch?: DisplayImageSwitch | null
+  consent?: string | null
   lease: DisplayLease
   profile_key: string
 }
@@ -1416,6 +1417,7 @@ export interface DisplayStopResult {
   memory_limit_mb?: number | null
   placement?: string
   image_switch?: DisplayImageSwitch | null
+  consent?: string | null
   lease: DisplayLease
   profile_key: string
   stopped: boolean
@@ -1441,6 +1443,7 @@ export interface DisplayObserveResult {
   memory_limit_mb?: number | null
   placement?: string
   image_switch?: DisplayImageSwitch | null
+  consent?: string | null
   lease: DisplayLease
   profile_key: string
   ticket: string
@@ -1468,6 +1471,7 @@ export interface DisplaySwitchSandboxImageResult {
   memory_limit_mb?: number | null
   placement?: string
   image_switch?: DisplayImageSwitch | null
+  consent?: string | null
   lease: DisplayLease
   profile_key: string
   docker_image: string
@@ -5592,6 +5596,7 @@ export interface DisplayStatusPayload {
   memory_limit_mb?: number | null
   placement?: string
   image_switch?: DisplayImageSwitch | null
+  consent?: string | null
   lease: DisplayLease
   profile_key: string
 }
