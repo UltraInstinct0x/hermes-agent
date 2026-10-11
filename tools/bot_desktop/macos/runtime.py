@@ -49,6 +49,11 @@ class Probe:
 
 
 def find_cua_driver() -> Optional[str]:
+    """The cua-driver the Mac screen talks to. The daemon runs from the CuaDriver app, and ``cua-driver mcp``
+    must speak the same contract version, so an explicit override wins, then the app's own binary, and only
+    then the package manager's pinned copy (which can be older than the daemon and exit at its handshake)."""
+    if not os.environ.get("HERMES_CUA_DRIVER_CMD", "").strip() and os.access(DEFAULT_APP, os.X_OK):
+        return DEFAULT_APP
     try:
         from tools.computer_use.cua_backend_driver import resolve_cua_driver_cmd
         found = resolve_cua_driver_cmd()
