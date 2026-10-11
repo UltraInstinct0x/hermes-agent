@@ -452,10 +452,14 @@ def _(rid, params: dict) -> dict:
     """What the calling client handles. ``server_requests: true`` marks this connection as one that answers
     server→client requests; a WebSocket client that never sends it gets every such request failed fast
     instead of stalling the agent for the deadline (#112548)."""
-    from tui_gateway import server_requests
+    from tui_gateway import client_identity, server_requests
     from tui_gateway.contracts import registry as contracts
-    server_requests.advertise(_caller_transport(), bool(params.get("server_requests")))
-    return _ok(rid, {"server_requests": sorted(contracts.SERVER_REQUESTS), "declines_not_shown": True})
+    transport = _caller_transport()
+    server_requests.advertise(transport, bool(params.get("server_requests")))
+    identity = client_identity.declare(
+        transport, client_id=params.get("client_id"), label=params.get("label"), kind=params.get("kind"))
+    return _ok(rid, {"server_requests": sorted(contracts.SERVER_REQUESTS), "declines_not_shown": True,
+                     "client_id": identity.client_id, "identity_source": identity.source})
 
 
 @method("ping")
