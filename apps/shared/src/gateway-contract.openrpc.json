@@ -30053,6 +30053,18 @@
             "title": "Display Name",
             "type": "string"
           },
+          "bot_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bot Title"
+          },
           "skill_count": {
             "default": 0,
             "title": "Skill Count",
