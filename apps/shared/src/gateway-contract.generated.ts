@@ -2076,6 +2076,7 @@ export interface ProfileRow {
   provider?: string | null
   description?: string
   display_name?: string
+  bot_title?: string | null
   skill_count?: number
   previous_names?: string[]
   last_session?: ProfileSessionPreview | null
