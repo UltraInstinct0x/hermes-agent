@@ -3,7 +3,8 @@
 Spawned by ``macos.runtime.start`` the way the Linux launcher spawns Xvnc, so it survives a gateway restart and
 the bridge dials its Unix socket like any other RFB server. One run is one SESSION:
 
-1. ask the person at the Mac (``consent``); anything but Allow ends the run with ``EXIT_DENIED``;
+1. ask the person at the Mac (``consent``, unless ``bot_desktop.mac_consent`` is allow or deny); anything but
+   Allow ends the run with ``EXIT_DENIED``;
 2. grab a first frame and the window list, refusing to start when either fails (fail closed);
 3. serve RFB on ``<home>/bot-desktop/rfb.sock``, capturing only while a viewer is attached;
 4. end when stopped, or when no viewer has been attached for ``viewer_grace_s``, so the next session asks again.
@@ -53,6 +54,7 @@ class Settings:
     deny_extra: tuple[str, ...] = ()
     viewer_grace_s: float = 120.0
     consent_timeout_s: int = _consent.TIMEOUT_S
+    consent_mode: str = _consent.DEFAULT_MODE  # ask | allow | deny, see consent.MODES
     profile: str = "default"
 
     @classmethod
@@ -72,7 +74,8 @@ class Settings:
                    max_fps=max(0.5, num("HERMES_BD_MAC_FPS", 10.0)),
                    capture_mode=env.get("HERMES_BD_MAC_CAPTURE", "auto"),
                    deny_extra=extra, viewer_grace_s=num("HERMES_BD_MAC_GRACE_S", 120.0),
-                   profile=env.get("HERMES_BD_PROFILE", "default"))
+                   profile=env.get("HERMES_BD_PROFILE", "default"),
+                   consent_mode=_consent.normalize_mode(env.get("HERMES_BD_MAC_CONSENT")))
 
 
 class Audit:
@@ -141,8 +144,7 @@ class Session:
                    f"password managers, Messages and Keychain Access are hidden. Deny stops the request.")
         started = self.clock()
         self.audit.line("session_requested", profile=self.settings.profile)
-        outcome = self.consent_fn(summary, timeout_s=self.settings.consent_timeout_s)
-        self.audit.line("consent", allowed=outcome.allowed, reason=outcome.reason)
+        outcome = self._decide_consent(summary)
         if not outcome.allowed:
             (self.state_dir / "consent").write_text(outcome.reason, encoding="utf-8")
             return EXIT_DENIED
@@ -157,6 +159,19 @@ class Session:
         return EXIT_OK
 
     # -- internals ---------------------------------------------------------------------------------------
+
+    def _decide_consent(self, summary: str) -> _consent.Consent:
+        """``ask`` shows the dialog; ``allow`` and ``deny`` decide without one. Every other guard (auth at the
+        bridge, deny list, audit, banners, take-control confirmation, idle end) is independent of this step."""
+        mode = _consent.normalize_mode(self.settings.consent_mode)
+        if mode == "allow":
+            outcome = _consent.Consent(True, "auto_allow")
+        elif mode == "deny":
+            outcome = _consent.Consent(False, "policy")
+        else:
+            outcome = self.consent_fn(summary, timeout_s=self.settings.consent_timeout_s)
+        self.audit.line("consent", allowed=outcome.allowed, reason=outcome.reason, mode=mode)
+        return outcome
 
     def _clear_markers(self) -> None:
         for name in ("consent", "error", "env", "fb-size"):
