@@ -15,6 +15,7 @@ Bodies are rebound onto server.py's globals (method_ctx.bind_module) and referen
 
 import logging
 import threading
+import time
 import weakref
 
 from .method_ctx import HandlerRegistry, bind_module
@@ -135,10 +136,19 @@ def _minted_for_this_connection() -> set[str]:
 
 
 def _mint_viewer_id(requested: str) -> str:
-    """Server-minted viewer identity. ``requested`` is honoured only when THIS connection minted it
-    earlier; anything else (including a holder id read off display.status) gets a fresh id."""
+    """Server-minted viewer identity. An identified client (``client_identity``) always gets the id derived from
+    its ``client_id``: the same on every connection, so a reconnecting phone is still the lease holder. An
+    anonymous connection keeps the per-connection id: ``requested`` is honoured only when THIS connection
+    minted it earlier; anything else (including a holder id read off display.status) gets a fresh id."""
     import secrets
+    from tui_gateway import client_identity
+    from tools.bot_desktop import lease as _bd_lease
     mine = _minted_for_this_connection()
+    identity = client_identity.identity_for(current_transport())
+    if identity.client_id != client_identity.UNKNOWN_ID:
+        viewer_id = _bd_lease.stable_viewer_id(identity.client_id)
+        mine.add(viewer_id)
+        return viewer_id
     if requested in mine:
         return requested
     viewer_id = secrets.token_urlsafe(16)
@@ -255,8 +265,47 @@ def _(rid, params: dict) -> dict:
         return _err(rid, _DISPLAY_ERR, "viewer_id required")
     if (refused := _foreign_viewer_id(rid, viewer_id)) is not None:
         return refused
-    lease = _bd_lease.acquire(viewer_id, reason=str(params.get("reason") or ""))
+    lease = _bd_lease.acquire(viewer_id, reason=str(params.get("reason") or ""), **_holder_identity())
     return _ok(rid, {"lease": _bd_lease.public_view(lease)})
+
+
+def _holder_identity() -> dict:
+    """Who is taking the lease, as ``lease.acquire`` records it: the calling client's id and label, and
+    ``watched`` because a human acting through the gateway has a viewer socket the watchdog can watch."""
+    from tui_gateway import client_identity
+    identity = client_identity.identity_for(current_transport())
+    known = identity.client_id != client_identity.UNKNOWN_ID
+    return {"client_id": identity.client_id if known else None, "label": identity.label, "watched": True}
+
+
+@method("display.take")
+@_profile_scoped
+def _(rid, params: dict) -> dict:
+    """Take the screen from whoever holds it, on purpose: the explicit, announced form of ``display.lease.acquire``.
+    Any paired device may; nothing asks the holder. The lease records who took it from whom (``forced``,
+    ``taken_from``, the caller's ``client_id`` / ``label``) and every client is told with ``display.lease.taken``,
+    so the holder that was displaced sees who did it rather than a bare change of owner."""
+    from tui_gateway import client_identity
+    from tools.bot_desktop import lease as _bd_lease
+    viewer_id = str(params.get("viewer_id") or "").strip()
+    if not viewer_id:
+        return _err(rid, _DISPLAY_ERR, "viewer_id required")
+    if (refused := _foreign_viewer_id(rid, viewer_id)) is not None:
+        return refused
+    epoch_before = _bd_lease.get().epoch
+    lease = _bd_lease.acquire(viewer_id, reason=str(params.get("reason") or ""), **_holder_identity())
+    if lease.epoch == epoch_before:  # already theirs: nothing changed hands, nothing to announce
+        return _ok(rid, {"lease": _bd_lease.public_view(lease), "forced": False, "taken_from": None})
+    taken_from = lease.taken_from if lease.forced else None
+    identity = client_identity.identity_for(current_transport())
+    logger.info("bot-desktop lease: taken by %s (%s)%s", identity.label or identity.client_id, identity.client_id,
+                f" from {taken_from}" if taken_from else "")
+    from hermes_constants import hermes_home_key
+    _broadcast_global_event("display.lease.taken", {
+        "profile_key": hermes_home_key(), "lease": _bd_lease.public_view(lease), "taken_by": identity.as_wire(),
+        "taken_from": taken_from, "at": time.time()})
+    return _ok(rid, {"lease": _bd_lease.public_view(lease), "forced": bool(lease.forced),
+                     "taken_from": taken_from})
 
 
 @method("display.lease.release")
