@@ -142,7 +142,7 @@ async def _bridge(ws: WebSocket, info: dict) -> None:
     """Pump RFB bytes between the viewer socket (already accepted) and THIS profile's Xvnc, gated by
     the lease."""
     from hermes_constants import hermes_home_key
-    from tools.bot_desktop import lease as _lease
+    from tools.bot_desktop import lease as _lease, lease_watchdog as _lease_watchdog
     from tools.bot_desktop.rfb_filter import RfbClientFilter
 
     profile_home = str(info["hermes_home"])
@@ -233,6 +233,8 @@ async def _bridge(ws: WebSocket, info: dict) -> None:
 
     tasks = [asyncio.create_task(rfb_to_ws()), asyncio.create_task(ws_to_rfb()),
              asyncio.create_task(watch_eviction())]
+    # Presence for the dropped-holder watchdog: a holder with no live socket for 30 s gets control taken back.
+    _lease_watchdog.attach(profile_home, viewer_id)
     try:
         done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for t in pending:
@@ -245,6 +247,7 @@ async def _bridge(ws: WebSocket, info: dict) -> None:
             if exc and not isinstance(exc, (WebSocketDisconnect, ConnectionError)):
                 _log.debug("display ws ended: %r", exc)
     finally:
+        _lease_watchdog.detach(profile_home, viewer_id)
         unsubscribe()
         writer.close()
         try:
@@ -255,7 +258,8 @@ async def _bridge(ws: WebSocket, info: dict) -> None:
             relay.kill()  # the exec client; Xvnc inside the sandbox stays up
         # Closing the viewer window hands control back. A DROPPED link (laptop lid, Wi-Fi, 1006)
         # keeps the human's exclusion: they may be mid-login on that screen and the agent must not
-        # resume into it. The Desktop reconnects into the same lease, or the human hands back.
+        # resume into it. The viewer reconnects into the same lease (stable viewer id), or the human hands
+        # back, or the dropped-holder watchdog (tools/bot_desktop/lease_watchdog.py) does after 30 s.
         if viewer_closed.is_set() and _lease.viewer_may_send_input(viewer_id, profile_key=profile_home):
             _lease.release(viewer_id, profile_key=profile_home)
         try:
