@@ -77,13 +77,14 @@ def missing_package_message(modules: Iterable[str]) -> str:
 _SECRET_LIKE = re.compile(r"(?i)\b(sk-[A-Za-z0-9_-]{8,}|[A-Za-z0-9_]*(key|token|secret|password)[A-Za-z0-9_]*\s*[=:]\s*\S+)")
 
 
-def log_tail_summary(log_path: Path, *, max_chars: int = 200) -> Optional[str]:
+def log_tail_summary(log_path: Path, *, max_chars: int = 200, since: int = 0) -> Optional[str]:
     """The last non-empty line of ``launcher.log`` (for a traceback, its error line), trimmed and with anything
-    secret-looking removed. None when there is no readable log."""
+    secret-looking removed. ``since`` is a byte offset: earlier output is ignored. None when there is no readable
+    log."""
     try:
         with open(log_path, "rb") as fh:
             fh.seek(0, os.SEEK_END)
-            fh.seek(max(0, fh.tell() - 4096))
+            fh.seek(max(since, fh.tell() - 4096))
             text = fh.read().decode("utf-8", "replace")
     except OSError:
         return None

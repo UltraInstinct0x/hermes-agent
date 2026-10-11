@@ -306,7 +306,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     state_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(state_dir, 0o700)
     from tools.bot_desktop.macos.cua import CuaSession
-    cua = CuaSession(command, env=cua_child_env(), scratch_dir=state_dir)
+    cua = CuaSession(command, env=cua_child_env(), scratch_dir=state_dir, log_path=state_dir / "cua-mcp.log")
     session = Session(state_dir, cua, Settings.from_env(dict(os.environ)))
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: session.request_stop())

@@ -16,6 +16,7 @@ import queue
 import subprocess
 import tempfile
 import threading
+import weakref
 from pathlib import Path
 from typing import Any, Optional, Protocol
 
@@ -23,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 _PROTOCOL = "2025-06-18"
 CALL_TIMEOUT_S = 20.0
+STDERR_LOG_MAX_BYTES = 256 * 1024
+_active: "Optional[weakref.ref[CuaSession]]" = None  # the one session allowed to own a live ``cua-driver mcp``
 
 
 class CuaError(RuntimeError):
@@ -45,8 +48,11 @@ class CuaSession:
     """Spawns ``<cua-driver> mcp`` and speaks newline-delimited JSON-RPC to it. Calls are serialised by a lock;
     a dead process is reported as :class:`CuaError` and respawned by the next call."""
 
-    def __init__(self, command: str, *, env: Optional[dict[str, str]] = None, scratch_dir: Optional[Path] = None) -> None:
+    def __init__(self, command: str, *, env: Optional[dict[str, str]] = None, scratch_dir: Optional[Path] = None,
+                 log_path: Optional[Path] = None) -> None:
         self._command = command
+        self._log_path = log_path
+        self._log_start = 0
         self._env = env
         self._scratch = scratch_dir
         self._lock = threading.Lock()
@@ -56,9 +62,44 @@ class CuaSession:
 
     # -- transport -------------------------------------------------------------------------------------
 
+    def _open_stderr_log(self) -> Any:
+        """Append-mode, owner-only stderr log (rotated once it grows past the cap); DEVNULL without a path.
+        ``_log_start`` marks where this spawn's output begins so a failure quotes only its own line."""
+        if self._log_path is None:
+            return subprocess.DEVNULL
+        try:
+            if self._log_path.stat().st_size > STDERR_LOG_MAX_BYTES:
+                os.replace(self._log_path, self._log_path.with_name(self._log_path.name + ".1"))
+        except OSError:
+            pass
+        try:
+            fd = os.open(self._log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        except OSError:
+            return subprocess.DEVNULL
+        self._log_start = os.fstat(fd).st_size
+        return os.fdopen(fd, "ab", buffering=0)
+
+    def _exit_detail(self) -> str:
+        """``": <last stderr line>"`` of the dead child (redacted, short), or an empty string."""
+        if self._log_path is None:
+            return ""
+        from tools.bot_desktop.macos import preflight
+        line = preflight.log_tail_summary(self._log_path, since=self._log_start)
+        return f": {line}" if line else ""
+
     def _spawn(self) -> None:
-        self._proc = subprocess.Popen([self._command, "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                      stderr=subprocess.DEVNULL, env=self._env, bufsize=0)
+        global _active
+        other = _active() if _active is not None else None
+        if other is not None and other is not self and other._proc is not None and other._proc.poll() is None:
+            raise CuaError("another Mac screen capture session is already running")
+        stderr = self._open_stderr_log()
+        try:
+            self._proc = subprocess.Popen([self._command, "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                          stderr=stderr, env=self._env, bufsize=0)
+        finally:
+            if stderr is not subprocess.DEVNULL:
+                stderr.close()
+        _active = weakref.ref(self)
         self._lines = queue.Queue()
         threading.Thread(target=self._pump, args=(self._proc, self._lines), daemon=True, name="cua-mcp-reader").start()
         self._rpc("initialize", {"protocolVersion": _PROTOCOL, "capabilities": {},
@@ -81,7 +122,11 @@ class CuaSession:
             self._proc.stdin.write((json.dumps(message) + "\n").encode())
             self._proc.stdin.flush()
         except OSError as exc:
-            raise CuaError(f"cua-driver pipe closed: {exc}") from exc
+            try:  # a child that died at startup has written its reason by the time it is reaped
+                self._proc.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                pass
+            raise CuaError(f"cua-driver exited{self._exit_detail()}") from exc
 
     def _rpc(self, method: str, params: dict[str, Any], timeout: float = CALL_TIMEOUT_S) -> dict[str, Any]:
         self._next_id += 1
@@ -95,19 +140,31 @@ class CuaSession:
                 raise CuaError(f"cua-driver {method} timed out after {timeout:.0f}s") from exc
             if message is None:
                 self._kill()
-                raise CuaError("cua-driver exited")
+                raise CuaError(f"cua-driver exited{self._exit_detail()}")
             if message.get("id") == rid:
                 if "error" in message:
                     raise CuaError(str(message["error"].get("message") or message["error"])[:300])
                 return message.get("result") or {}
 
     def _kill(self) -> None:
+        """Stop and reap the child so no ``cua-driver mcp`` outlives the session (no zombie either)."""
         proc, self._proc = self._proc, None
-        if proc is not None:
+        if proc is None:
+            return
+        for stream in (proc.stdin, proc.stdout):
             try:
-                proc.kill()
+                if stream is not None:
+                    stream.close()
             except OSError:
                 pass
+        try:
+            proc.terminate()
+            proc.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        except OSError:
+            pass
 
     def call(self, name: str, arguments: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """One tool call; returns ``structuredContent`` (``{}`` when absent). Tool-level errors raise."""
