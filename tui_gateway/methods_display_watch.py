@@ -147,6 +147,15 @@ def _poll_lease_files() -> None:
         _broadcast_global_event("display.lease", _lease_event_payload(key, lease))
 
 
+def _poll_holder_watchdog() -> None:
+    """One pass of the dropped-holder watchdog (``tools/bot_desktop/lease_watchdog.py``): a human holder whose viewer
+    socket has been gone for 30 s hands control back. The release is an ordinary lease transition, so the
+    in-process listener broadcasts ``display.lease`` (reason ``holder_dropped``)."""
+    from tools.bot_desktop import lease_watchdog
+    for home in _watched_lease_homes():
+        lease_watchdog.check(str(home))
+
+
 def _ensure_lease_watcher() -> None:
     """Once per process, from the first display.* call: start the lease-file poll thread and mark
     in-process transitions as seen so they broadcast exactly once (via the in-process listener)."""
@@ -166,6 +175,7 @@ def _ensure_lease_watcher() -> None:
         while True:
             try:
                 _poll_lease_files()
+                _poll_holder_watchdog()
                 _poll_idle_screens()
                 _poll_runtime_files()
             except Exception:

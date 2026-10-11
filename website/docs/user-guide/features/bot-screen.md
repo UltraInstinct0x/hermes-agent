@@ -160,10 +160,12 @@ Every bot's computer is one click away in three places of Hermes Desktop:
 4. Click **Hand back**. The bot regains control and re-captures the screen
    before continuing. Closing the pane also hands control back. A *dropped*
    connection is different: if your laptop lid closes or Wi-Fi drops while you
-   hold control, you keep it — the bot stays locked out of a screen you may be
-   mid-login on — until you reconnect and hand back. If you come back after a
-   reload and the pane still says a human holds control, a **Hand back (force)**
-   button appears to clear it.
+   hold control, you keep it for 30 seconds — the bot stays locked out of a
+   screen you may be mid-login on. Reconnecting inside that window (the same
+   client keeps the same viewer identity) puts you straight back in control;
+   after it, control returns to the bot on its own with the reason
+   `holder_dropped`. If you come back after a reload and the pane still says a
+   human holds control, a **Hand back (force)** button appears to clear it.
 
 While you hold control, the bot's `computer_use` and browser tools are refused
 with `human_has_control`, captures included. This is a tool-level fence, not an
@@ -178,7 +180,11 @@ taking over is always yours to start, and a bot never holds a tool call open
 waiting for you.
 
 Two viewers on one screen: the most recent **Take over** wins; the previous
-controller drops back to watching.
+controller drops back to watching. A client that identifies itself (a paired
+phone, the desktop app) is named on the lease. `display.take` is the explicit
+form of a takeover: any paired device may take the screen from another human, the
+lease records who took it from whom (`forced`, `taken_from`), and every client
+receives a `display.lease.taken` event so the displaced viewer can say who did it.
 
 ## Browser sessions that survive the handoff
 

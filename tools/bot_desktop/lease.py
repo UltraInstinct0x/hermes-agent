@@ -52,9 +52,26 @@ class Lease:
     since: float = field(default_factory=time.time)
     reason: str = ""
     epoch: int = 0
+    # Who holds, when the human came through the gateway (client_identity.py): never a capability, shown to
+    # every client. ``forced``: the holder displaced another human; ``taken_from`` names who. ``watched``:
+    # held through a gateway viewer, so the dropped-holder watchdog (lease_watchdog.py) may hand it back; a
+    # takeover from the CLI has no viewer socket to watch and is never reclaimed that way.
+    client_id: Optional[str] = None
+    label: Optional[str] = None
+    forced: bool = False
+    taken_from: Optional[str] = None
+    watched: bool = False
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+def stable_viewer_id(client_id: str) -> str:
+    """The viewer id of an identified client: the same on every connection of that client, so a phone that
+    reconnects after a drop is still the holder and needs no force-release. Still a capability for the lease
+    API (acquire/release also require the connection to have minted it, ``methods_display``)."""
+    import hashlib
+    return "v-" + hashlib.sha256(f"bot-desktop-viewer:{client_id}".encode()).hexdigest()[:32]
 
 
 def public_view(lease: Lease) -> dict[str, object]:
@@ -187,29 +204,38 @@ def _transition(profile_key: Optional[str], mutate: Callable[[Lease], bool]) -> 
     return lease
 
 
-def acquire(viewer_id: str, *, profile_key: Optional[str] = None, reason: str = "") -> Lease:
+def acquire(viewer_id: str, *, profile_key: Optional[str] = None, reason: str = "",
+            client_id: Optional[str] = None, label: Optional[str] = None, watched: bool = False) -> Lease:
     """Human ``viewer_id`` takes control. Last writer wins: a second viewer evicts the first, and the
-    RFB bridge closes the evicted socket so its UI drops to view-only."""
+    RFB bridge closes the evicted socket so its UI drops to view-only. Displacing another human is recorded
+    on the lease (``forced``, ``taken_from``) so every client can tell a takeover from a hand-over.
+    ``client_id`` / ``label`` name the holder for display; ``watched`` opts a gateway viewer into the
+    dropped-holder watchdog."""
     def _m(lease: Lease) -> bool:
         if lease.holder == HUMAN and lease.viewer_id == viewer_id:
             return False  # already theirs: no epoch bump, `since` and the reason on screen stay put
+        displaced = lease.holder == HUMAN
+        previous = (lease.label or lease.client_id or "another viewer") if displaced else None
         # The agent's ask ("please log in to X") stays as the takeover reason: the human needs it
         # on screen WHILE they act, not only before they clicked Take over.
         lease.holder, lease.viewer_id, lease.since = HUMAN, viewer_id, time.time()
         lease.reason = reason or ""
+        lease.client_id, lease.label, lease.watched = client_id, label, watched
+        lease.forced, lease.taken_from = displaced, previous
         return True
     return _transition(profile_key, _m)
 
 
 def release(viewer_id: Optional[str] = None, *, profile_key: Optional[str] = None,
-            unless_human: bool = False, epoch: Optional[int] = None) -> Lease:
+            unless_human: bool = False, epoch: Optional[int] = None, reason: str = "") -> Lease:
     """Return control to the agent. With ``viewer_id`` only that holder may release (a stale viewer
     closing its window must not yank control from the one who took over after it). ``unless_human``
     makes a bare release a no-op while any human holds: the decision is taken under the file lock,
     so a takeover racing a check-then-release cannot be silently revoked. ``epoch`` releases only the
     lease generation the caller judged: any transition since (a takeover, a hand-back and re-take by the
     same viewer) keeps the lease. Callers read the returned lease's holder to learn whether anything
-    happened."""
+    happened. ``reason`` is why control came back (shown on the agent's lease, e.g. ``holder_dropped``
+    from the watchdog)."""
     def _m(lease: Lease) -> bool:
         if epoch is not None and lease.epoch != epoch:
             logger.info("bot-desktop lease: release of epoch %d ignored, the lease changed since", epoch)
@@ -226,7 +252,8 @@ def release(viewer_id: Optional[str] = None, *, profile_key: Optional[str] = Non
             # Already the agent's. Bumping the epoch here would make a legitimately admitted in-flight
             # agent action (a double-clicked Hand back, a stray CLI stop) look overtaken and get voided.
             return False
-        lease.holder, lease.viewer_id, lease.since, lease.reason = AGENT, None, time.time(), ""
+        lease.holder, lease.viewer_id, lease.since, lease.reason = AGENT, None, time.time(), reason
+        lease.client_id, lease.label, lease.forced, lease.taken_from, lease.watched = None, None, False, None, False
         return True
     return _transition(profile_key, _m)
 
