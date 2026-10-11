@@ -31,7 +31,22 @@ class DisplayLease(Result):
     viewer_hash: str | None = None
     since: float
     epoch: int
-    reason: str = ""
+    reason: str = ""  # the agent's ask while a human holds; why control came back while the agent does (holder_dropped)
+    # Who holds (``client_identity``): for display only, never a capability. Null for a takeover from the CLI
+    # and for a client that never identified itself.
+    client_id: str | None = None
+    label: str | None = None
+    forced: bool = False  # the holder displaced another human
+    taken_from: str | None = None  # label (or client id) of the holder that was displaced
+    watched: bool = False  # held through a gateway viewer: handed back after 30 s without its socket
+
+
+class DisplayTaker(Result):
+    """Who ran ``display.take``: the connection's client identity (``unknown`` when it never identified itself)."""
+
+    client_id: str
+    label: str | None = None
+    kind: str | None = None
 
 
 class DisplayImageSwitch(Result):
@@ -157,6 +172,22 @@ method("display.lease.acquire", params=DisplayLeaseAcquireParams, result=Display
        doc="Take over: the human named by a viewer id this connection minted controls the screen.")
 
 
+class DisplayTakeParams(ProfileParams):
+    viewer_id: str  # the id THIS connection minted via display.observe (stable for an identified client)
+    reason: str | None = None
+
+
+class DisplayTakeResult(Result):
+    lease: DisplayLease
+    forced: bool  # true when it displaced another human; false when it was free or already the caller's
+    taken_from: str | None = None
+
+
+method("display.take", params=DisplayTakeParams, result=DisplayTakeResult,
+       doc="Take the screen from whoever holds it, explicitly: recorded on the lease (who, from whom) and "
+           "announced to every client as display.lease.taken. Any paired device may.")
+
+
 class DisplayLeaseReleaseParams(ProfileParams):
     viewer_id: str | None = None
     force: bool | None = None
@@ -194,6 +225,19 @@ class DisplayLeasePayload(Payload):
 
 
 event("display.lease", DisplayLeasePayload, doc="The takeover lease changed hands; every client repaints.")
+
+
+class DisplayLeaseTakenPayload(Payload):
+    profile_key: str
+    lease: DisplayLease
+    taken_by: DisplayTaker
+    taken_from: str | None = None  # who was displaced; null when the screen was free
+    at: float
+
+
+event("display.lease.taken", DisplayLeaseTakenPayload,
+      doc="A client took the screen on purpose (display.take); sent in addition to display.lease so the displaced "
+          "holder can show who did it.")
 
 
 class DisplayInstallLogPayload(Payload):
