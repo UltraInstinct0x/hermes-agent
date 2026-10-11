@@ -15,6 +15,7 @@ from tools.bot_desktop.macos import runtime as mac
 @pytest.fixture(autouse=True)
 def _mac_env(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime, "state_dir", lambda: tmp_path)
+    monkeypatch.setattr(mac, "_modules_missing_for_server", lambda: [])  # no real child in unrelated tests
     mac.reset_probe_cache()
     yield
     mac.reset_probe_cache()
