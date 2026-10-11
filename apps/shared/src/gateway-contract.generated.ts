@@ -1420,6 +1420,11 @@ export interface DisplayLease {
   since: number
   epoch: number
   reason?: string
+  client_id?: string | null
+  label?: string | null
+  forced?: boolean
+  taken_from?: string | null
+  watched?: boolean
 }
 export type LeaseHolder = 'agent' | 'human'
 export interface DisplayThumbnailParams {
@@ -1520,6 +1525,16 @@ export interface DisplayLeaseAcquireParams {
 }
 export interface DisplayLeaseResult {
   lease: DisplayLease
+}
+export interface DisplayTakeParams {
+  profile?: string | null
+  viewer_id: string
+  reason?: string | null
+}
+export interface DisplayTakeResult {
+  lease: DisplayLease
+  forced: boolean
+  taken_from?: string | null
 }
 export interface DisplayLeaseReleaseParams {
   profile?: string | null
@@ -5595,6 +5610,19 @@ export interface DisplayLeasePayload {
   profile_key: string
   lease: DisplayLease
 }
+export interface DisplayLeaseTakenPayload {
+  profile_key: string
+  lease: DisplayLease
+  taken_by: DisplayTaker
+  taken_from?: string | null
+  at: number
+}
+/** Who ran ``display.take``: the connection's client identity (``unknown`` when it never identified itself). */
+export interface DisplayTaker {
+  client_id: string
+  label?: string | null
+  kind?: string | null
+}
 export interface DisplayInstallLogPayload {
   profile_key: string
   line: string
@@ -6153,6 +6181,8 @@ export interface RpcMethods {
   'display.stop': { params: DisplayStopParams; result: DisplayStopResult }
   /** Decide the pending default sandbox image switch for this profile; refused when none is pending. */
   'display.switchSandboxImage': { params: DisplaySwitchSandboxImageParams; result: DisplaySwitchSandboxImageResult }
+  /** Take the screen from whoever holds it, explicitly: recorded on the lease (who, from whom) and announced to every client as display.lease.taken. Any paired device may. */
+  'display.take': { params: DisplayTakeParams; result: DisplayTakeResult }
   /** One JPEG grab of the bot's screen; read-only, never changes the lease. A client presenting the holder's viewer id keeps receiving frames while a human drives. */
   'display.thumbnail': { params: DisplayThumbnailParams; result: DisplayThumbnailResult }
   /** Stage a non-image file into the session workspace and hand back its @file: ref. */
@@ -6615,6 +6645,7 @@ export const RPC_METHODS = [
   'display.status',
   'display.stop',
   'display.switchSandboxImage',
+  'display.take',
   'display.thumbnail',
   'file.attach',
   'free_tier.ack_notice',
@@ -7042,6 +7073,8 @@ export interface BackendGatewayEventMap {
   'display.install.log': DisplayInstallLogPayload
   /** The takeover lease changed hands; every client repaints. */
   'display.lease': DisplayLeasePayload
+  /** A client took the screen on purpose (display.take); sent in addition to display.lease so the displaced holder can show who did it. */
+  'display.lease.taken': DisplayLeaseTakenPayload
   /** This profile's screen started or stopped (also for transitions made outside hermes serve). */
   'display.status': DisplayStatusPayload
   /** A session-level failure outside a turn (agent init, model switch, compression, resume). */
@@ -7189,6 +7222,7 @@ export const GATEWAY_EVENT_TYPES = [
   'display.install.done',
   'display.install.log',
   'display.lease',
+  'display.lease.taken',
   'display.status',
   'error',
   'free_tier.challenge',
