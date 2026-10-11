@@ -133,7 +133,8 @@ def test_first_gateway_ws_client_starts_the_armed_discovery_once(monkeypatch):
     monkeypatch.setattr(chat_ws, "_close_unless_sidecar_allowed", _allowed)
     monkeypatch.setattr("tui_gateway.ws.handle_ws", _handle_ws)
     # The handler reads the app's session authority off the socket, as a real WebSocket carries it.
-    ws = types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace()))
+    # query_params is what Starlette gives every websocket route.
+    ws = types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace()), query_params={})
     asyncio.run(chat_ws.gateway_ws(ws))
     asyncio.run(chat_ws.gateway_ws(ws))
 

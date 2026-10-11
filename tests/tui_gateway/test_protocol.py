@@ -297,7 +297,8 @@ def test_send_returns_an_answer_committed_after_the_deadline_expired(capture, mo
     from tui_gateway import server_requests
 
     cancels: list[dict] = []
-    monkeypatch.setattr(server_requests, "_emit", lambda event, sid, payload: cancels.append(payload))
+    monkeypatch.setattr(server_requests, "_emit",
+                        lambda event, sid, payload: cancels.append(payload) if event == "request.cancel" else None)
 
     real_wait = server_requests.threading.Event.wait
 
@@ -1962,9 +1963,9 @@ def test_approval_that_ends_before_its_settle_hook_attaches_is_still_withdrawn(s
         # No queue entry carries this request id: the wait already ended when the hook tries to attach.
         server._emit_approval_request("ws-raced", {"command": "rm -rf build", "description": "",
                                                    "request_id": "appr-already-resolved"})
-        assert len(peer.frames) == 2, f"the sent approval was never withdrawn: {peer.frames}"
-        sent, cancel = peer.frames
-        assert sent["method"] == "approval"
+        assert len(peer.frames) == 3, f"the sent approval was never withdrawn: {peer.frames}"
+        sent, cancel, resolved = peer.frames  # resolved: answered elsewhere, see test_human_requests_ledger
+        assert sent["method"] == "approval" and resolved["params"]["type"] == "request.resolved"
         assert cancel["params"]["type"] == "request.cancel"
         assert cancel["params"]["payload"]["id"] == sent["id"]
         assert server_requests.open_requests("ws-raced") == []
