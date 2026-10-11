@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .base import Params, Result
+from .base import Params, Result, WireEnum
 from .registry import method
 
 
@@ -31,6 +31,18 @@ class ClientCapabilitiesParams(Params):
     #: error for methods it has no handler for. A WebSocket client that never says so is treated as a
     #: build older than server→client requests and every such request fails fast for it.
     server_requests: bool = False
+    #: Who this client is (F1). A stable id per install/device, a human label ("Gokhan's iPhone") and a
+    #: kind (``desktop`` | ``pwa`` | ``ios`` | ...). Self-declared; a proxy-supplied ``device`` handle on the
+    #: WebSocket upgrade overrides ``client_id`` (see ``tui_gateway/client_identity.py``). Absent = unknown.
+    client_id: str | None = None
+    label: str | None = None
+    kind: str | None = None
+
+
+class ClientIdentitySource(WireEnum):
+    device = "device"
+    declared = "declared"
+    none = "none"
 
 
 class ClientCapabilitiesResult(Result):
@@ -41,6 +53,10 @@ class ClientCapabilitiesResult(Result):
     #: answer: the request settles only once every attached client declined (server_requests.py).
     #: An older backend settles on the first error, so a client sends the decline only when this is true.
     declines_not_shown: bool = False
+    #: The identity this backend recorded for the connection: ``device:<handle>`` when the upgrade carried a
+    #: trusted device handle, the declared id otherwise, ``unknown`` for a client that sent neither.
+    client_id: str = "unknown"
+    identity_source: ClientIdentitySource = ClientIdentitySource.none
 
 
 method("client.capabilities", params=ClientCapabilitiesParams, result=ClientCapabilitiesResult,

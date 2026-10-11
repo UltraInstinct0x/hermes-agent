@@ -56,6 +56,23 @@ New question for the user = `_ask("<method>", sid, params, timeout)` in the emit
 and a `server_request(...)` in `contracts/server_requests.py`.
 New event = `event("<type>", Payload)` in `contracts/events.py`; the emitter is checked against it.
 
+## Client identity and the human-request ledger
+
+`client_identity.py` says who is on a connection: `client.capabilities {client_id, label, kind}` (declared) or the
+proxy-appended `device` query of the WS upgrade (read in `chat_ws.py`, never from RPC params, so it wins over the
+declared id). No identity = `unknown`; older clients are unchanged. `human_requests.py` records every question put
+to a person (`approval`, `clarify`, `sudo`, `secret`, vault prompts, `setup_choose`; not the desktop read/act
+bridges) in the profile's `state.db` (`human_requests`, `human_request_answers`, declared in `hermes_state_common.SCHEMA_SQL`),
+written from the `ServerRequest` lifecycle in `server_requests.py` (open, answered, expired, withdrawn, cancelled).
+Every answer path names its answerer: response frame, `request.answer`, `clarify.lock`, and `approval.respond`
+(the agent's queue settles that one later, so `note_approval_answer` stamps who spoke on the open request). The
+secret kinds (`sudo`, `secret`) keep no prompt, choices or answer text, and `request.resolved` carries none. A
+gateway that opens a profile's ledger tombstones rows a dead process left open (`lost_on_restart`: the blocked
+agent thread died with it) and prunes closed rows after 90 days. `request.list` (open across ALL sessions of the
+profile) and `request.history` read it; `python -m tui_gateway.human_requests open-count [--home PATH]` prints the
+requests a live gateway still waits on, for the restart guard. A ledger failure is logged and never blocks the
+request or its `request.resolved` event.
+
 ## Profile scope in RPC methods
 
 One `serve` process may host sessions from several profile homes (Desktop pooled backends launch
