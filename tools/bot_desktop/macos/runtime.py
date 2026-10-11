@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from tools.bot_desktop import runtime as _rt
-from tools.bot_desktop.macos import idle as _idle
+from tools.bot_desktop.macos import idle as _idle, preflight as _preflight
 
 logger = logging.getLogger(__name__)
 
@@ -106,12 +106,32 @@ def probe(*, force: bool = False) -> Probe:
         return cached
     command = find_cua_driver()
     result = _judge(command, _permissions(command) if command else None)
+    if result.supported and (blocker := _python_blocker()) is not None:
+        result = Probe(False, True, [], blocker)
     _cache.update(at=now, probe=result)
     return result
 
 
 def reset_probe_cache() -> None:
     _cache.update(at=0.0, probe=None)
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _modules_missing_for_server() -> list[str]:
+    """Server imports that do not resolve in the child's own environment. Tests replace this function."""
+    return _preflight.missing_in_child(_server_env(), cwd=str(_repo_root()))
+
+
+def _python_blocker() -> Optional[str]:
+    try:
+        missing = _modules_missing_for_server()
+    except Exception:
+        logger.debug("mac screen import preflight could not run", exc_info=True)
+        return None
+    return _preflight.missing_package_message(missing) + "." if missing else None
 
 
 # -- configuration ---------------------------------------------------------------------------------------
@@ -148,7 +168,9 @@ def _server_env() -> dict[str, str]:
         env["HERMES_BD_MAC_DENY"] = json.dumps([str(x) for x in cfg["mac_deny_apps"]])
     if cfg.get("mac_viewer_grace_seconds"):
         env["HERMES_BD_MAC_GRACE_S"] = str(cfg["mac_viewer_grace_seconds"])
-    return env
+    # Only the parent's site-packages dirs are added; the gateway may be an isolated interpreter whose venv is
+    # on sys.path in-process only, which a plain child would not see.
+    return _preflight.with_parent_site_packages(env)
 
 
 # -- state -----------------------------------------------------------------------------------------------
@@ -213,7 +235,7 @@ def start(*, wait_seconds: float = START_WAIT_S) -> "_rt.DesktopStatus":
             for name in ("launcher.pid", "env", "rfb.sock", "consent", "error"):
                 (sd / name).unlink(missing_ok=True)
         _spawn_guard()
-        repo_root = Path(__file__).resolve().parents[3]
+        repo_root = _repo_root()
         log = open(sd / "launcher.log", "wb")
         proc = subprocess.Popen([sys.executable, "-m", "tools.bot_desktop.macos.server"], cwd=str(repo_root),
                                 env=_server_env(), stdin=subprocess.DEVNULL, stdout=log, stderr=log,
@@ -243,7 +265,9 @@ def _why_it_ended(sd: Path) -> str:
     error = _read(sd / "error")
     if error:
         return f"The Mac could not capture its screen: {error}"
-    return "The Mac screen session ended before it started. See launcher.log for details."
+    summary = _preflight.log_tail_summary(sd / "launcher.log")
+    detail = f" ({summary})" if summary else ""
+    return f"The Mac screen session ended before it started{detail}. See launcher.log for details."
 
 
 def _read(path: Path) -> Optional[str]:
