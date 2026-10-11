@@ -40,6 +40,8 @@ def test_sudo_request_preserves_command_without_leaking_prompt_context(monkeypat
     frames, replays = [], []
 
     def refuse(frame):
+        if frame.get("method") == "event":  # the request.resolved broadcast that follows each answer
+            return True
         frames.append(frame)
         replays.append(server_requests.open_requests(sid))
         assert server_requests.resolve_response(
