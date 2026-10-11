@@ -17300,6 +17300,18 @@
             ],
             "default": null
           },
+          "consent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Consent"
+          },
           "lease": {
             "$ref": "#/components/schemas/DisplayLease"
           },
@@ -17479,6 +17491,18 @@
             ],
             "default": null
           },
+          "consent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Consent"
+          },
           "lease": {
             "$ref": "#/components/schemas/DisplayLease"
           },
@@ -17641,6 +17665,18 @@
               }
             ],
             "default": null
+          },
+          "consent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Consent"
           },
           "lease": {
             "$ref": "#/components/schemas/DisplayLease"
@@ -17836,6 +17872,18 @@
             ],
             "default": null
           },
+          "consent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Consent"
+          },
           "lease": {
             "$ref": "#/components/schemas/DisplayLease"
           },
@@ -18027,6 +18075,18 @@
               }
             ],
             "default": null
+          },
+          "consent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Consent"
           },
           "lease": {
             "$ref": "#/components/schemas/DisplayLease"
