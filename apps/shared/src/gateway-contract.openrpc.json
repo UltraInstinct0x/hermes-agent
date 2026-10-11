@@ -925,6 +925,24 @@
       }
     },
     {
+      "name": "display.take",
+      "summary": "Take the screen from whoever holds it, explicitly: recorded on the lease (who, from whom) and announced to every client as display.lease.taken. Any paired device may.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/DisplayTakeParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DisplayTakeResult"
+        }
+      }
+    },
+    {
       "name": "display.thumbnail",
       "summary": "One JPEG grab of the bot's screen; read-only, never changes the lease. A client presenting the holder's viewer id keeps receiving frames while a human drives.",
       "params": [
@@ -16885,6 +16903,52 @@
             "default": "",
             "title": "Reason",
             "type": "string"
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Client Id"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          },
+          "forced": {
+            "default": false,
+            "title": "Forced",
+            "type": "boolean"
+          },
+          "taken_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Taken From"
+          },
+          "watched": {
+            "default": false,
+            "title": "Watched",
+            "type": "boolean"
           }
         },
         "required": [
@@ -17005,6 +17069,45 @@
           "lease"
         ],
         "title": "DisplayLeaseResult",
+        "type": "object"
+      },
+      "DisplayLeaseTakenPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "profile_key": {
+            "title": "Profile Key",
+            "type": "string"
+          },
+          "lease": {
+            "$ref": "#/components/schemas/DisplayLease"
+          },
+          "taken_by": {
+            "$ref": "#/components/schemas/DisplayTaker"
+          },
+          "taken_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Taken From"
+          },
+          "at": {
+            "title": "At",
+            "type": "number"
+          }
+        },
+        "required": [
+          "profile_key",
+          "lease",
+          "taken_by",
+          "at"
+        ],
+        "title": "DisplayLeaseTakenPayload",
         "type": "object"
       },
       "DisplayObserveParams": {
@@ -17932,6 +18035,113 @@
           "docker_image"
         ],
         "title": "DisplaySwitchSandboxImageResult",
+        "type": "object"
+      },
+      "DisplayTakeParams": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
+          "viewer_id": {
+            "title": "Viewer Id",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "viewer_id"
+        ],
+        "title": "DisplayTakeParams",
+        "type": "object"
+      },
+      "DisplayTakeResult": {
+        "additionalProperties": false,
+        "properties": {
+          "lease": {
+            "$ref": "#/components/schemas/DisplayLease"
+          },
+          "forced": {
+            "title": "Forced",
+            "type": "boolean"
+          },
+          "taken_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Taken From"
+          }
+        },
+        "required": [
+          "lease",
+          "forced"
+        ],
+        "title": "DisplayTakeResult",
+        "type": "object"
+      },
+      "DisplayTaker": {
+        "additionalProperties": false,
+        "description": "Who ran ``display.take``: the connection's client identity (``unknown`` when it never identified itself).",
+        "properties": {
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kind"
+          }
+        },
+        "required": [
+          "client_id"
+        ],
+        "title": "DisplayTaker",
         "type": "object"
       },
       "DisplayThumbnailParams": {
@@ -49741,6 +49951,18 @@
           "name": "payload",
           "schema": {
             "$ref": "#/components/schemas/DisplayLeasePayload"
+          }
+        }
+      ]
+    },
+    {
+      "name": "display.lease.taken",
+      "summary": "A client took the screen on purpose (display.take); sent in addition to display.lease so the displaced holder can show who did it.",
+      "params": [
+        {
+          "name": "payload",
+          "schema": {
+            "$ref": "#/components/schemas/DisplayLeaseTakenPayload"
           }
         }
       ]
