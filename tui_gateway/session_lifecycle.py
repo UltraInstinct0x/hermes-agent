@@ -932,6 +932,27 @@ def _rebind_live_transport(sid: str, session: dict, transport: Transport) -> Non
         _cancel_ws_orphan_reap(sid)  # the client is back — a pending ws-orphan reap must not fire
 
 
+# Bounded: the caller holds the process-wide _session_resume_lock, which every resume/activate/submit-rebind and
+# session.close waits on. An unbounded wait on ONE session's history_lock there wedged them all (2026-10-12).
+_REATTACH_HISTORY_LOCK_WAIT_S = 2.0
+
+
+def _rebind_live_transport_bounded(rid, sid: str, session: dict, transport: Transport) -> dict | None:
+    """Under ``_session_resume_lock``: :func:`_rebind_live_transport` with a BOUNDED ``history_lock`` wait. None
+    once rebound; a retryable 4009 when the lock stays busy (the live session is left untouched)."""
+    lock = session.setdefault("history_lock", threading.Lock())
+    started = time.monotonic()
+    if not lock.acquire(timeout=_REATTACH_HISTORY_LOCK_WAIT_S):
+        logger.warning("reattach of live session %s refused: history_lock busy for %.1fs under the resume lock",
+                       sid, time.monotonic() - started)
+        return _err(rid, 4009, "session busy; retry resume")
+    try:
+        _rebind_live_transport(sid, session, transport)
+    finally:
+        lock.release()
+    return None
+
+
 def _ws_orphan_turn_activity_is_fresh(session: dict) -> bool:
     """Whether a detached RUNNING turn's activity clock (``_touch_activity``) is still fresh — the reaper must NOT
     interrupt healthy detached work (closed laptop). Conservative: disabled threshold, missing/opaque agent, unreadable
