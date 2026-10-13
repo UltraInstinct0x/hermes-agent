@@ -671,6 +671,36 @@ _WSL_CHAIN_NOTE = (
 )
 
 
+_DM_RUNNER = "bot_mode_dm.py"
+_DM_SETTLED_STATUSES = frozenset({"settled", "queued", "delivered"})
+
+
+def is_settled_dm_delivery(evt: dict) -> bool:
+    """True for the completion of a ``message_agent`` delivery runner that ended well and carries NO reply text.
+
+    The runner's stdout is the recipient's reply (``Reply from <name>:`` text) or, on the live-owner lane, a JSON
+    object. A JSON object with only a settled status means the message reached the recipient and its answer comes
+    as a message of its own, so the sender has nothing to relay. A failure (non-zero exit), a reply and anything
+    that cannot be read still wake the sender.
+    """
+    command = str(evt.get("command") or "")
+    if _DM_RUNNER not in command or "--run-delivery" not in command:
+        return False
+    if evt.get("exit_code") not in (0, "0"):
+        return False
+    out = str(evt.get("output") or "").strip()
+    start = out.find("{")
+    if start < 0 or out[:start].strip():
+        return False
+    try:
+        body = json.loads(out[start:])
+    except ValueError:
+        return False
+    if not isinstance(body, dict) or str(body.get("status") or "") not in _DM_SETTLED_STATUSES:
+        return False
+    return not str(body.get("reply") or "").strip() and not body.get("error")
+
+
 class ProcessRegistry(ProcessTerminationMixin, ProcessCheckpointMixin, ProcessOutputLogMixin):
     """In-memory registry of running and finished background processes.
     Thread-safe: accessed from executor threads (terminal_tool, process handlers),
@@ -1857,6 +1887,11 @@ class ProcessRegistry(ProcessTerminationMixin, ProcessCheckpointMixin, ProcessOu
             _evt_sid = evt.get("session_id", "")
             if evt.get("type") == "completion" and self._drain_should_skip(
                 _evt_sid, skip_poll_observed=skip_poll_observed):
+                continue
+            # A bot-to-bot delivery that only SETTLED (the recipient answered through its own message, which arrives
+            # as its own turn) has nothing to relay: waking the sender again made it say the same thing twice.
+            if evt.get("type") == "completion" and is_settled_dm_delivery(evt):
+                logger.debug("Skipped the wake for a settled DM delivery: session_id=%s", _evt_sid)
                 continue
             # Subagent-owned process notifications are suppressed by default — the
             # child's delegation result is the deliverable. Judge ownership on
