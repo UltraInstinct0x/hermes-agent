@@ -454,6 +454,24 @@ def _mirror_fast(sid, session, agent, arg) -> None:
         _emit("session.info", sid, _session_info(agent, session))
 
 
+def _mirror_yolo(sid, session, agent, arg) -> None:
+    """The slash worker toggled YOLO in ITS process and persisted the session row, but the gateway checks approvals
+    against its OWN in-memory flag: left alone, ``/yolo off`` reads OFF in the row while the gateway keeps bypassing
+    every approval. The stored row is the worker's verdict; take it into the live flag (no second write)."""
+    from hermes_state import SessionDB
+    from tools.approval_yolo import toggle_session_yolo
+    session_key = session.get("session_key")
+    if not session_key:
+        return
+    row_id = getattr(agent, "session_id", None) or session_key  # after compression the key can name the ended parent
+    with _session_db(session) as db:
+        meta = db.get_session(row_id) if db is not None else None
+    if meta is None:  # no stored row to read: change nothing rather than guess
+        return
+    toggle_session_yolo(session_key, SessionDB.session_yolo_enabled(meta))
+    _emit("session.info", sid, _session_info(agent, session))
+
+
 def _mirror_reload_mcp(sid, session, agent, arg) -> None:
     if agent and hasattr(agent, "reload_mcp_tools"):
         agent.reload_mcp_tools()
@@ -484,7 +502,7 @@ _SLASH_MIRRORS = {
     "approvals": _mirror_approvals, "personality": _mirror_personality,
     "compress": lambda sid, session, agent, arg: (
         _compress_live_with_feedback(sid, session, agent, arg, snapshot_kwargs=False) if agent else ""),
-    "fast": _mirror_fast,
+    "fast": _mirror_fast, "yolo": _mirror_yolo,
     "reload-mcp": _mirror_reload_mcp, "stop": _mirror_stop,
     "autoprune": _mirror_autoprune}
 
