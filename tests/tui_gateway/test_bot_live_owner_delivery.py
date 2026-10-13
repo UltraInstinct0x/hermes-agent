@@ -85,6 +85,7 @@ def test_local_work_blocks_mailbox_claim_without_consuming_envelope(monkeypatch,
     poll = rebind(session_notifications._poll_bot_live_delivery_once, {
         "_session_home": lambda session: tmp_path,
         "_session_turn_admission": _session_turn_admission,
+        "logger": __import__("logging").getLogger("test"),
         "_run_prompt_submit": submit,
         "_notif_release_turn": lambda session: session.update(running=False),
     })
@@ -115,6 +116,7 @@ def test_notice_envelope_is_posted_not_run_as_a_turn(monkeypatch, tmp_path):
     poll = rebind(session_notifications._poll_bot_live_delivery_once, {
         "_session_home": lambda session: tmp_path,
         "_session_turn_admission": _session_turn_admission,
+        "logger": __import__("logging").getLogger("test"),
         "_run_prompt_submit": lambda *args, **kwargs: submitted.append(args) or True,
         "_apply_cron_notice": lambda sid, session, home, record: applied.append((sid, home, record["id"])),
     })
@@ -132,7 +134,8 @@ def test_mailbox_poll_skips_owner_lookup_without_a_mailbox(monkeypatch, tmp_path
     lookups = []
     monkeypatch.setattr(mailbox, "find_canonical_live_owner", lambda home: lookups.append(home) or None)
     poll = rebind(session_notifications._poll_bot_live_delivery_once, {
-        "_session_home": lambda session: tmp_path, "_session_turn_admission": _session_turn_admission})
+        "_session_home": lambda session: tmp_path, "_session_turn_admission": _session_turn_admission,
+        "logger": __import__("logging").getLogger("test"),})
     session = {"history_lock": threading.RLock(), "agent": object(), "session_key": "chat",
                "active_session_lease": SimpleNamespace(lease_id="lease", released=False)}
     assert poll("live", session) is False
@@ -186,6 +189,7 @@ def test_mailbox_poll_delivers_past_a_schema_damaged_ticket(monkeypatch, tmp_pat
     poll = rebind(session_notifications._poll_bot_live_delivery_once, {
         "_session_home": lambda session: tmp_path,
         "_session_turn_admission": _session_turn_admission,
+        "logger": __import__("logging").getLogger("test"),
         "_run_prompt_submit": submit,
         "_notif_release_turn": lambda session: session.update(running=False),
     })

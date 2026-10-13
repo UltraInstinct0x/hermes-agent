@@ -673,9 +673,10 @@ def _apply_cron_notice(sid: str, session: dict, home, claimed: dict) -> None:
                 _submit_row_target_key(session), text, metadata, message_uid=stamp_message_uid(entry))
         if inserted:
             entry.update(_row_id=row_id, **{_DB_PERSISTED_MARKER: True})
-            with session["history_lock"]:
-                session.setdefault("history", []).append(entry)
-                session["history_version"] = int(session.get("history_version", 0)) + 1
+            # The caller holds ``history_lock`` through ``_session_turn_admission`` and the lock is not
+            # re-entrant: taking it here again deadlocked the poller on itself and wedged the whole session.
+            session.setdefault("history", []).append(entry)
+            session["history_version"] = int(session.get("history_version", 0)) + 1
             _emit("message.notice", sid, {
                 "row_id": row_id, "role": "assistant", "text": text,
                 "display_kind": CRON_NOTICE_DISPLAY_KIND, "display_metadata": metadata,
