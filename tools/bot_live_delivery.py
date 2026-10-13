@@ -246,6 +246,51 @@ def _matches(home: Path | str, record: dict, owner: dict) -> bool:
         db.close()
 
 
+def _same_stored_session(home: Path | str, pinned_session_id: str, current_session_id: str) -> bool:
+    """The pinned stored session is the current one, or the current one is its compression tip."""
+    if pinned_session_id == current_session_id:
+        return True
+    from hermes_state import SessionDB
+
+    db = SessionDB(db_path=Path(home) / "state.db", read_only=True)
+    try:
+        return db.get_compression_tip(pinned_session_id) == current_session_id
+    finally:
+        db.close()
+
+
+def adopt_orphaned_notices(profile_home: Path | str, owner: dict[str, Any]) -> int:
+    """Re-pin queued ``notice`` receipts whose owner lease is gone onto the current canonical owner.
+
+    A receipt is pinned to the lease that was registered when it was admitted, and ``claim_pending_delivery``
+    never lets another lease take it. When that lease dies (the app closed, the gateway restarted) before the
+    notice was posted, the receipt stays ``queued`` forever and its text (a routine's result) never reaches the
+    chat, while the sender was told it was accepted. Only notices move: they are posted as a row and start no
+    agent turn, so handing them to the one live owner of the SAME stored session chain cannot run anything
+    twice. A ``claimed`` receipt is left alone: its row may already be posted. Returns how many moved."""
+    current = _owner(profile_home, owner)
+    if not _root(profile_home).is_dir():
+        return 0
+    moved = 0
+    with _locked(profile_home) as root:
+        for path in sorted(root.glob("*.json")):
+            record = _scan_read(path)
+            if record is None or record["status"] != "queued" or record.get("kind") != "notice":
+                continue
+            pinned = record["owner"]
+            if pinned["profile_home"] != current["profile_home"]:
+                continue
+            if (pinned["lease_id"], pinned["live_session_id"]) == (current["lease_id"], current["live_session_id"]):
+                continue
+            if not _same_stored_session(profile_home, pinned["session_id"], current["session_id"]):
+                continue
+            record.update(owner=dict(current), **current,
+                          adopted_from={key: pinned[key] for key in ("lease_id", "live_session_id")})
+            _write(path, record)
+            moved += 1
+    return moved
+
+
 def owner_holds_delivery(profile_home: Path | str, record: dict) -> bool:
     """Whether the canonical live owner is still one that could claim ``record``."""
     owner = find_canonical_live_owner(profile_home)

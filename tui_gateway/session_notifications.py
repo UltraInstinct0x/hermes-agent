@@ -689,7 +689,8 @@ def _apply_cron_notice(sid: str, session: dict, home, claimed: dict) -> None:
 
 def _poll_bot_live_delivery_once(sid: str, session: dict) -> bool:
     """Run one durable envelope only after local FIFO/continuations yield the idle boundary."""
-    from tools.bot_live_delivery import claim_pending_delivery, complete_delivery, find_canonical_live_owner, has_mailbox
+    from tools.bot_live_delivery import (
+        adopt_orphaned_notices, claim_pending_delivery, complete_delivery, find_canonical_live_owner, has_mailbox)
 
     home = _session_home(session)
     # Most profiles never receive a delivery: without a mailbox there is nothing to claim, and the owner
@@ -712,6 +713,12 @@ def _poll_bot_live_delivery_once(sid: str, session: dict) -> bool:
                 or owner.get("session_id") != session.get("session_key")):
             return False
         # The mailbox matches each envelope to this pinned lease/live id and compression lineage.
+        # Notices pinned to a lease that no longer exists would wait forever: the live owner takes them over first.
+        try:
+            if (moved := adopt_orphaned_notices(home, owner)):
+                logger.info("adopted %d orphaned notice(s) for live session %s", moved, sid)
+        except Exception:
+            logger.warning("adopting orphaned notices failed", exc_info=True)
         claimed = claim_pending_delivery(home, owner)
         if claimed is None:
             return False
