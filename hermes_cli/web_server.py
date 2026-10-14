@@ -1266,10 +1266,6 @@ def _build_uvicorn_server(host: str, port: int, *, ssh_isolated: bool = False):
         ws_ping_interval=ping_interval,
         ws_ping_timeout=ping_timeout,
         ws_max_size=_DESKTOP_ATTACHMENT_WS_MAX_BYTES,
-        # No permessage-deflate: the desktop client (undici) refuses a message that inflates past its own cap (1009 "Max
-        # decompressed message size exceeded"), and a long Bot Chat transcript in one session.resume/history reply does.
-        # Plain frames have no such cap; the cost is bandwidth on a loopback/tailnet link.
-        ws_per_message_deflate=False,
         # Desktop sends a single SIGTERM and escalates to SIGKILL ~5s later;
         # uvicorn's default (None) waits on lingering ASGI tasks forever, so a
         # mid-turn request orphans the backend past that budget (#76244). 3s
