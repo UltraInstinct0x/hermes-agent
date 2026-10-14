@@ -157,7 +157,10 @@ def normalize_tool_call_entries(args: dict[str, Any]) -> tuple[list[dict[str, An
         try:
             raw_calls = json.loads(raw_calls)
         except json.JSONDecodeError as e:
-            return [], f"tool_call 'calls' is not valid JSON: {e}"
+            # Small models repeat the same broken envelope when told only that it is invalid (a missing "name" and an
+            # unclosed brace, three retries in a row): restate the shape, as local_batch_error does.
+            return [], (f"tool_call 'calls' is not valid JSON: {e}. Send calls as an array, one entry per tool, "
+                        'each with the tool name: {"calls":[{"name":"<tool>","arguments":{...}}]}.')
     if isinstance(raw_calls, dict):
         raw_calls = [raw_calls]
     if not isinstance(raw_calls, list) or not raw_calls:
