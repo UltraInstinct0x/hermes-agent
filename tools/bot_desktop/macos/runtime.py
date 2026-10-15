@@ -77,7 +77,7 @@ def _permissions(command: str) -> Optional[dict[str, Any]]:
     None when the daemon is down or the output is not JSON. Tests replace this function."""
     try:
         proc = subprocess.run([command, "permissions", "status", "--json"], capture_output=True, text=True,
-                              timeout=10, env=cua_child_env(), stdin=subprocess.DEVNULL)
+                              timeout=10, env=cua_child_env(), stdin=subprocess.DEVNULL, check=False)
         data = json.loads(proc.stdout or "")
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
@@ -208,7 +208,7 @@ def _geometry(sd: Path) -> str:
         return "auto"
 
 
-def status(profile: Optional[str] = None) -> "_rt.DesktopStatus":
+def status(profile: Optional[str] = None) -> _rt.DesktopStatus:
     p = probe()
     sd = _rt.state_dir()
     running = is_running()
@@ -236,7 +236,7 @@ def _spawn_guard() -> None:
         raise RuntimeError("the Mac screen session is not started from a test process")
 
 
-def start(*, wait_seconds: float = START_WAIT_S) -> "_rt.DesktopStatus":
+def start(*, wait_seconds: float = START_WAIT_S) -> _rt.DesktopStatus:
     """Start the session (idempotent). Blocks while the person at the Mac answers the prompt; raises
     ``RuntimeError`` with a calm sentence when it is declined, unanswered, or capture is unavailable."""
     p = probe(force=True)

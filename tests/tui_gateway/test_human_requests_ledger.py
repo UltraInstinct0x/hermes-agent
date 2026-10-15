@@ -202,7 +202,7 @@ def test_clarify_locks_are_appended_and_the_last_lock_resolves(env):
 
 def test_clarify_answered_by_one_response_frame_records_every_answer(env):
     phone = _identified("ios-1", "Phone")
-    thread, holder, request_id = _ask_clarify(env)
+    thread, _holder, request_id = _ask_clarify(env)
 
     server_requests.resolve_response(
         {"jsonrpc": "2.0", "id": request_id, "result": {"answers": {"q1": "eu", "q2": None}}}, phone)
@@ -222,7 +222,7 @@ def test_clarify_that_times_out_is_expired(env):
 
 
 def test_session_cancel_marks_open_requests_cancelled(env):
-    thread, holder, _ = _ask_clarify(env)
+    thread, _holder, _ = _ask_clarify(env)
 
     assert server_requests.cancel("s1", reason="interrupted") == 1
     thread.join(5)
