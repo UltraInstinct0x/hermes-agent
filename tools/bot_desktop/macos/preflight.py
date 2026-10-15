@@ -62,7 +62,7 @@ def missing_in_child(env: dict[str, str], *, cwd: Optional[str] = None, python: 
             "print(json.dumps(bad))\n", *wanted]
     try:
         proc = subprocess.run(argv, capture_output=True, text=True, timeout=_PROBE_TIMEOUT_S, env=env, cwd=cwd,
-                              stdin=subprocess.DEVNULL)
+                              stdin=subprocess.DEVNULL, check=False)
         found = json.loads(proc.stdout.strip().splitlines()[-1])
     except (OSError, subprocess.SubprocessError, ValueError, IndexError):
         return wanted

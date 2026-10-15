@@ -101,7 +101,7 @@ def test_create_time_validation_rejects_unknown_mode():
 def test_notice_without_owner_writes_assistant_row_and_no_turn(home):
     job = _job()
     assert delivery._deliver_to_bot_chat(job, "3 tasks done", "", mode="notice") is None
-    session_id, rows = _bot_chat_rows(home)
+    _, rows = _bot_chat_rows(home)
     [row] = rows
     assert row["role"] == "assistant"
     assert row["content"] == "3 tasks done"
