@@ -15,7 +15,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from typing import Any, Optional
 
 from tools.delegate_tool_registry import _active_subagents, _active_subagents_lock
@@ -107,13 +107,12 @@ def _last_active(row: dict[str, Any]) -> float:
 def _iso(epoch: Optional[float]) -> Optional[str]:
     if not isinstance(epoch, (int, float)):
         return None
-    return datetime.fromtimestamp(float(epoch), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.fromtimestamp(float(epoch), tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _goal_label(title: Optional[str]) -> str:
     text = str(title or "").strip()
-    if text.startswith(_TITLE_PREFIX):
-        text = text[len(_TITLE_PREFIX):]
+    text = text.removeprefix(_TITLE_PREFIX)
     return text if len(text) <= _GOAL_LABEL_CHARS else text[: _GOAL_LABEL_CHARS - 3] + "..."
 
 
