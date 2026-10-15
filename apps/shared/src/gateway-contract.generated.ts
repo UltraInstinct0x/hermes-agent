@@ -1953,6 +1953,56 @@ export interface BotRelayReplyParams {
   error?: string | null
   reason?: string | null
 }
+export interface RequestListParams {
+  profile?: string | null
+  answered_limit?: number | null
+}
+export interface RequestListResult {
+  open?: HumanRequestRow[]
+  recent?: HumanRequestRow[]
+  open_count: number
+}
+/** One ledger row. ``session_id`` is the stored (durable) session id; the request id is what ``request.answer`` takes. ``answers`` is clarify only (newest lock per question); sudo and secret rows have no prompt, choices or answers. */
+export interface HumanRequestRow {
+  request_id: string
+  kind: HumanRequestKind
+  profile: string
+  bot_key?: string | null
+  session_id?: string | null
+  session_key?: string | null
+  call_id?: string | null
+  prompt?: string | null
+  choices?: unknown[] | null
+  state: HumanRequestState
+  outcome?: string | null
+  cancel_reason?: string | null
+  created_at: number
+  expires_at?: number | null
+  answered_at?: number | null
+  answered_by?: AnsweredBy | null
+  answered_via?: string | null
+  answers?: Record<string, string | null> | null
+}
+export type HumanRequestKind = 'approval' | 'clarify' | 'sudo' | 'secret' | 'other'
+export type HumanRequestState = 'open' | 'answered' | 'expired' | 'withdrawn' | 'cancelled' | 'lost_on_restart'
+/** Who answered. ``client_id`` is ``unknown`` for a client that never identified itself, and for an answer given on a surface that does not reach this gateway (Telegram, CLI). */
+export interface AnsweredBy {
+  client_id: string
+  label?: string | null
+  kind?: string | null
+}
+export interface RequestHistoryParams {
+  profile?: string | null
+  session_id?: string | null
+  kind?: HumanRequestKind | null
+  states?: HumanRequestState[] | null
+  limit?: number | null
+  before?: number | null
+}
+export interface RequestHistoryResult {
+  requests?: HumanRequestRow[]
+  next_before?: number | null
+}
 export interface I18nLanguagesResult {
   languages: LanguageOption[]
 }
@@ -1985,11 +2035,17 @@ export interface GatewayCapabilitiesResult {
 export interface ClientCapabilitiesParams {
   server_requests?: boolean
   desktop_local?: boolean
+  client_id?: string | null
+  label?: string | null
+  kind?: string | null
 }
 export interface ClientCapabilitiesResult {
   server_requests: string[]
   declines_not_shown?: boolean
+  client_id?: string
+  identity_source?: ClientIdentitySource
 }
+export type ClientIdentitySource = 'device' | 'declared' | 'none'
 /** Client→server method params / server→client request params. Unknown keys are rejected. */
 export type Params = Record<string, never>
 /** ``machine_kind`` is ``Spark``, ``Mac``, ``PC`` or ``computer``. ``nvidia_platform`` is ``products.nvidia_platform()``: ``rtx_spark``, ``dgx_spark``, ``discrete`` or null. ``locale`` is the OS account's first UI language, null when the OS has none. */
@@ -5326,6 +5382,7 @@ export interface CanonicalProfileRow {
   provider?: string | null
   description?: string
   display_name?: string
+  bot_title?: string | null
   skill_count?: number
   previous_names?: string[]
   last_session?: ProfileCanonicalSession | null
@@ -6117,6 +6174,18 @@ export interface PetHatchProgressPayload {
 }
 /** ``change_watcher._CHANGE_WATCHES`` payload fn — ``{}`` for every watch except pet.changed. */
 export type ChangeSignalPayload = Record<string, unknown>
+/** Emitted when a request was answered (by any client, or on another surface), to the clients attached to the session, answerer included (the id lets a client dedupe). ``choice`` is the approval decision, ``answers`` the clarify answers (clipped); both are null for sudo and secret. */
+export interface RequestResolvedPayload {
+  id: string
+  method: string
+  kind: HumanRequestKind
+  session_id: string
+  outcome?: string | null
+  choice?: string | null
+  answers?: Record<string, string | null> | null
+  answered_by: AnsweredBy
+  at: number
+}
 export type ConnectorErrorReason = 'INVALID_PARAMS' | 'NOT_OWNER' | 'UNSUPPORTED_RUNTIME' | 'CONNECTOR_REQUEST_FAILED' | 'INVALID_CONNECTOR_RESPONSE' | 'UNKNOWN_TARGET' | 'LINK_STILL_VALID' | 'REISSUE_REFUSED' | 'UNKNOWN_OPERATION' | 'INVALID_ANSWER' | 'NEEDS_NOUS_AUTH' | 'CONNECTOR_NOT_FOUND' | 'TOOLS_UNAVAILABLE' | 'CONNECTORS_UNAVAILABLE' | 'CATALOG_UNAVAILABLE' | 'ACCOUNTS_UNAVAILABLE' | 'CONNECTION_NOT_FOUND' | 'POLICY_UNAVAILABLE' | 'POLICY_CONFLICT' | 'FORBIDDEN_SCOPE' | 'ORG_REQUIRED' | 'ORG_ACCESS_DENIED' | 'INVALID_POLICY' | 'ALIAS_TAKEN'
 
 // ── Client→server methods ──
@@ -6461,6 +6530,10 @@ export interface RpcMethods {
   'reload.mcp': { params: ReloadMcpParams; result: ReloadMcpResult }
   /** Answer an open server→client request from a client that never received the frame. */
   'request.answer': { params: RequestAnswerParams; result: RequestAnswerResult }
+  /** Newest-first page of the human-request ledger (retention 90 days). */
+  'request.history': { params: RequestHistoryParams; result: RequestHistoryResult }
+  /** Every request a live gateway still waits on across ALL sessions of the profile, plus the most recent closed ones. open_count is what a restart guard asks before restarting. */
+  'request.list': { params: RequestListParams; result: RequestListResult }
   /** Diff between a checkpoint and the working tree, with an ANSI rendering sized to the TUI. */
   'rollback.diff': { params: RollbackDiffParams; result: RollbackDiffResult }
   /** Checkpoints for the session's cwd; ``enabled: false`` when checkpointing is off. */
@@ -6812,6 +6885,8 @@ export const RPC_METHODS = [
   'reload.env',
   'reload.mcp',
   'request.answer',
+  'request.history',
+  'request.list',
   'rollback.diff',
   'rollback.list',
   'rollback.restore',
@@ -7192,6 +7267,8 @@ export interface BackendGatewayEventMap {
   'reasoning.delta': StreamDeltaPayload
   /** The backend withdrew an open server→client request; clear the matching card only. */
   'request.cancel': RequestCancelPayload
+  /** A server→client request was answered; says who and with what. request.cancel (reason resolved) still follows for approvals answered over RPC. */
+  'request.resolved': RequestResolvedPayload
   /** Background review of the last turn finished. */
   'review.summary': ReviewSummaryPayload
   /** Persisted goal / loop / heartbeat state changed. */
@@ -7307,6 +7384,7 @@ export const GATEWAY_EVENT_TYPES = [
   'reasoning.available',
   'reasoning.delta',
   'request.cancel',
+  'request.resolved',
   'review.summary',
   'session.control.update',
   'session.info',
