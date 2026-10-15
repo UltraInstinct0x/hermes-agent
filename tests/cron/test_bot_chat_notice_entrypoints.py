@@ -22,7 +22,13 @@ def home(tmp_path, monkeypatch):
     own.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(own))
     monkeypatch.setattr(delivery._sched, "load_config", dict)
-    monkeypatch.setattr(delivery, "_run_bot_chat_turn", Mock(side_effect=AssertionError("notice must not spawn a turn")))
+    import tools.bot_live_delivery as mailbox
+
+    monkeypatch.setattr(mailbox, "deliver_to_live_owner", Mock(side_effect=AssertionError("notice must not start a turn")))
+    db = SessionDB(db_path=own / "state.db")
+    db.create_session("chat", source="cli")
+    db.set_session_title("chat", "Bot Chat")
+    db.close()
     return own
 
 

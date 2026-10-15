@@ -24365,47 +24365,6 @@
         "title": "MessageInterimPayload",
         "type": "object"
       },
-      "MessageNoticePayload": {
-        "additionalProperties": false,
-        "description": "``session_notifications._apply_cron_notice`` \u2014 a ``cron_notice`` row just persisted into the session\n(``cron.bot_chat_delivery_mode: notice``). Same keys the ``session.history`` projection carries.",
-        "properties": {
-          "row_id": {
-            "title": "Row Id",
-            "type": "integer"
-          },
-          "role": {
-            "title": "Role",
-            "type": "string"
-          },
-          "text": {
-            "title": "Text",
-            "type": "string"
-          },
-          "display_kind": {
-            "title": "Display Kind",
-            "type": "string"
-          },
-          "display_metadata": {
-            "additionalProperties": true,
-            "title": "Display Metadata",
-            "type": "object"
-          },
-          "timestamp": {
-            "title": "Timestamp",
-            "type": "number"
-          }
-        },
-        "required": [
-          "row_id",
-          "role",
-          "text",
-          "display_kind",
-          "display_metadata",
-          "timestamp"
-        ],
-        "title": "MessageNoticePayload",
-        "type": "object"
-      },
       "MessageReactParams": {
         "additionalProperties": false,
         "description": "``row_id`` is ``messages.id``; a not-yet-persisted live message names ``newest_role`` instead.\n``emoji`` null clears; the same emoji again retracts.",
@@ -50426,18 +50385,6 @@
           "name": "payload",
           "schema": {
             "$ref": "#/components/schemas/MessageInterimPayload"
-          }
-        }
-      ]
-    },
-    {
-      "name": "message.notice",
-      "summary": "A cron job posted its output into this session as a notice row; paint it, no agent turn runs.",
-      "params": [
-        {
-          "name": "payload",
-          "schema": {
-            "$ref": "#/components/schemas/MessageNoticePayload"
           }
         }
       ]
