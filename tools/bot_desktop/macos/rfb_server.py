@@ -59,7 +59,7 @@ class PixelFormat:
                            self.red_max, self.green_max, self.blue_max, self.red_shift, self.green_shift, self.blue_shift)
 
     @classmethod
-    def parse(cls, data: bytes) -> "PixelFormat":
+    def parse(cls, data: bytes) -> PixelFormat:
         bpp, depth, be, tc, rm, gm, bm, rs, gs, bs = struct.unpack(">BBBBHHHBBB3x", data)
         fmt = cls(bpp, depth, bool(be), bool(tc), rm, gm, bm, rs, gs, bs)
         if not fmt.supported():
@@ -149,7 +149,7 @@ def encode_raw(image: Image.Image, rect: Rect, fmt: PixelFormat) -> bytes:
     return struct.pack(">HHHHi", x, y, w, h, ENC_RAW) + pack_pixels(image.crop((x, y, x + w, y + h)), fmt)
 
 
-def encode_zrle(image: Image.Image, rect: Rect, fmt: PixelFormat, z: "zlib._Compress") -> bytes:
+def encode_zrle(image: Image.Image, rect: Rect, fmt: PixelFormat, z: zlib._Compress) -> bytes:
     """One ZRLE rectangle. ``z`` is the client's persistent zlib stream (RFC 6143 section 7.7.6)."""
     x, y, w, h = rect
     three = cpixel_eligible(fmt)
@@ -179,7 +179,7 @@ def desktop_size_rect(w: int, h: int) -> bytes:
 
 
 class _Client:
-    def __init__(self, server: "RfbServer", reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    def __init__(self, server: RfbServer, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         self.server = server
         self.reader = reader
         self.writer = writer
