@@ -69,7 +69,7 @@ class InputDriver:
     _presses: dict = field(default_factory=dict)
     _held: set = field(default_factory=set)
     _last_click: Optional[tuple[str, int, int, float]] = None
-    _queue: "queue.Queue" = field(default_factory=queue.Queue)
+    _queue: queue.Queue = field(default_factory=queue.Queue)
     _thread: Optional[threading.Thread] = None
     _stop: threading.Event = field(default_factory=threading.Event)
     errors: int = 0

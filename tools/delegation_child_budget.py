@@ -27,7 +27,7 @@ _ABANDONED_WORKER_TTL_S = 900.0
 _UNIT_REGISTRATION_GRACE_S = 30.0
 
 _lock = threading.Lock()
-_leases: set["ChildLease"] = set()
+_leases: set[ChildLease] = set()
 
 
 class ChildBudgetExceeded(Exception):
@@ -51,7 +51,7 @@ def _held_total_locked() -> int:
     return sum(len(lease._held) for lease in _leases)
 
 
-def _is_orphan(lease: "ChildLease", index: int, now: float, alive_threads: set[int]) -> bool:
+def _is_orphan(lease: ChildLease, index: int, now: float, alive_threads: set[int]) -> bool:
     if index in lease._settling:
         return now - lease._settling[index] > _ABANDONED_WORKER_TTL_S
     if index in lease._started:
