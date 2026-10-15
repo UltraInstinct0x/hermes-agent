@@ -1,4 +1,15 @@
 """A notice pinned to a lease that died must still reach the chat through the current live owner."""
+import inspect
+
+import pytest
+
+from tools import bot_live_delivery as _mailbox
+
+if "notice" not in inspect.signature(_mailbox.deliver_to_live_owner).parameters:
+    # Cron notices no longer travel as mailbox envelopes (cron/bot_chat_notice.py writes the row directly) and
+    # the session authority, not a lease-pinned poller, admits Bot Chat deliveries. Nothing is left to adopt;
+    # drop this file with the commit that added it once the owner confirms.
+    pytest.skip("mailbox notice envelopes were retired", allow_module_level=True)
 
 
 def _owners(tmp_path):
