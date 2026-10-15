@@ -6069,15 +6069,6 @@ export interface MessageReactionPayload {
   reactions: MessageReaction[]
   role: string
 }
-/** ``session_notifications._apply_cron_notice`` — a ``cron_notice`` row just persisted into the session (``cron.bot_chat_delivery_mode: notice``). Same keys the ``session.history`` projection carries. */
-export interface MessageNoticePayload {
-  row_id: number
-  role: string
-  text: string
-  display_kind: string
-  display_metadata: Record<string, unknown>
-  timestamp: number
-}
 /** ``session_notifications`` process_registry.on_output. */
 export interface TerminalOutputPayload {
   process_id: string
@@ -7172,8 +7163,6 @@ export interface BackendGatewayEventMap {
   'message.delta': MessageDeltaPayload
   /** Interim assistant commentary (text beside tool calls) sealed as its own segment. */
   'message.interim': MessageInterimPayload
-  /** A cron job posted its output into this session as a notice row; paint it, no agent turn runs. */
-  'message.notice': MessageNoticePayload
   /** The agent reacted to a message; paint it live. */
   'message.reaction': MessageReactionPayload
   /** A turn began streaming; an automation turn carries its async-result card. */
@@ -7315,7 +7304,6 @@ export const GATEWAY_EVENT_TYPES = [
   'message.complete',
   'message.delta',
   'message.interim',
-  'message.notice',
   'message.reaction',
   'message.start',
   'moa.aggregating',
