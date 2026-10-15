@@ -91,7 +91,7 @@ def test_snapshot_carries_child_session_id_or_null(runtime):
     from tools.delegate_tool_child_run import _register_child
     from tools.delegate_tool_registry import _unregister_subagent
 
-    server, owner, transport, call = runtime
+    _server, owner, transport, call = runtime
     with_session = SimpleNamespace(_subagent_id="with-sid", _delegate_depth=1, model="test", session_id="child-session-1")
     without_session = SimpleNamespace(_subagent_id="no-sid", _delegate_depth=1, model="test")
     for child in (with_session, without_session):
