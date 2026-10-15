@@ -267,7 +267,7 @@ def test_raw_is_used_when_the_client_does_not_offer_zrle(sock_path):
         await server.start()
         v = await _Viewer.connect(sock_path, encodings=(rfb.ENC_RAW,))
         await v.request()
-        (x, y, w, h, enc, data), = await v.read_update()
+        (_x, _y, w, h, enc, data), = await v.read_update()
         assert enc == rfb.ENC_RAW and (w, h) == (70, 40)
         assert Image.frombytes("RGB", (w, h), data, "raw", "BGRX").tobytes() == frame.tobytes()
         v.close()

@@ -58,7 +58,7 @@ class Settings:
     profile: str = "default"
 
     @classmethod
-    def from_env(cls, env: dict[str, str]) -> "Settings":
+    def from_env(cls, env: dict[str, str]) -> Settings:
         def num(key: str, default: float) -> float:
             try:
                 return float(env.get(key, default))

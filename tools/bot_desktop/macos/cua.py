@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 _PROTOCOL = "2025-06-18"
 CALL_TIMEOUT_S = 20.0
 STDERR_LOG_MAX_BYTES = 256 * 1024
-_active: "Optional[weakref.ref[CuaSession]]" = None  # the one session allowed to own a live ``cua-driver mcp``
+_active: Optional[weakref.ref[CuaSession]] = None  # the one session allowed to own a live ``cua-driver mcp``
 
 
 class CuaError(RuntimeError):
@@ -57,7 +57,7 @@ class CuaSession:
         self._scratch = scratch_dir
         self._lock = threading.Lock()
         self._proc: Optional[subprocess.Popen] = None
-        self._lines: "queue.Queue[Optional[dict[str, Any]]]" = queue.Queue()
+        self._lines: queue.Queue[Optional[dict[str, Any]]] = queue.Queue()
         self._next_id = 0
 
     # -- transport -------------------------------------------------------------------------------------
@@ -107,7 +107,7 @@ class CuaSession:
         self._write({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
     @staticmethod
-    def _pump(proc: subprocess.Popen, out: "queue.Queue[Optional[dict[str, Any]]]") -> None:
+    def _pump(proc: subprocess.Popen, out: queue.Queue[Optional[dict[str, Any]]]) -> None:
         assert proc.stdout is not None
         for raw in iter(proc.stdout.readline, b""):
             try:
