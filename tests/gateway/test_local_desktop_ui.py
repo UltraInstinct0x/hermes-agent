@@ -24,6 +24,7 @@ _ANSWERS = {
     "theme.apply": {"value": json.dumps({"applied": {"accent": "violet"}})},
     "theme.pick": {"picked": {"accent": "violet"}},
     "setup_beat": {"choice": "next"},
+    "app.action": {"value": json.dumps({"success": True, "ok": True, "action": "tab.list"})},
 }
 
 
@@ -48,6 +49,7 @@ def window(monkeypatch):
     monkeypatch.setattr(local_desktop_ui, "_turns", {})
     monkeypatch.setattr(local_desktop_ui, "_preview_bridge", {})
     monkeypatch.setattr(local_desktop_ui, "_tour_bridge", {})
+    monkeypatch.setattr(local_desktop_ui, "_app_action_bridge", {})
     monkeypatch.setattr(local_desktop_ui, "_process_routes", {})
     monkeypatch.setattr(local_desktop_ui, "_emitter_installed", False)
     monkeypatch.setattr(local_desktop_ui, "_process_sinks_installed", False)
@@ -110,6 +112,24 @@ def test_tour_fails_fast_once_no_window_answered(window, monkeypatch):
     sent = len(window.requests)
     assert "No Hermes Desktop window answered the tour" in window.agent.tour_callback({"action": "start"})
     assert len(window.requests) == sent
+
+
+def test_app_action_is_answered_by_the_renderer(window):
+    local_viewer_events.wire(window.turn, window.agent)
+    assert json.loads(window.agent.app_action_callback({"action": "tab.list"}))["ok"] is True
+    request = next(f for f in window.requests if f["method"] == "app.action")
+    assert request["params"] == {"session_id": "canon", "action": "tab.list"}
+
+
+def test_app_action_fails_fast_once_no_window_answered(window, monkeypatch):
+    monkeypatch.setattr(local_desktop_ui, "_APP_ACTION_PROBE_TIMEOUT_S", 0.3)
+    window.silent.add("app.action")
+    local_viewer_events.wire(window.turn, window.agent)
+    first = json.loads(window.agent.app_action_callback({"action": "tab.list"}))
+    assert first["ok"] is False and "No Hermes app window answered" in first["detail"]
+    sent = len(window.requests)
+    assert json.loads(window.agent.app_action_callback({"action": "tab.list"}))["ok"] is False
+    assert len(window.requests) == sent  # the cooldown short-circuits: nothing was asked again
 
 
 def test_background_process_output_follows_its_session_after_the_turn(window):
