@@ -167,7 +167,6 @@ def test_no_window_means_a_fast_honest_failure_end_to_end(session, monkeypatch):
     def silent_send(method, sid, params, timeout=None, **_kw):
         waits.append(timeout)
         time.sleep(timeout)
-        return None
 
     monkeypatch.setattr(server_requests, "send", silent_send)
     monkeypatch.setattr(server, "_APP_ACTION_PROBE_TIMEOUT_S", 0.2)

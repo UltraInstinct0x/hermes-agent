@@ -36,7 +36,7 @@ def _fake_site(tmp_path: Path) -> Path:
 def _base_python() -> str:
     """The base interpreter (what the gateway launcher runs), not a venv python that finds its own packages."""
     base = getattr(sys, "_base_executable", sys.executable)
-    if subprocess.run([base, "-I", "-c", "import PIL"], capture_output=True).returncode == 0:
+    if subprocess.run([base, "-I", "-c", "import PIL"], capture_output=True, check=False).returncode == 0:
         pytest.skip("the base interpreter already has Pillow, so the isolation cannot be shown")
     return base
 
@@ -44,7 +44,7 @@ def _base_python() -> str:
 def _run_isolated(tmp_path: Path, env_line: str) -> list[str]:
     base = _base_python()
     code = _LAUNCHER.format(repo=str(REPO), site=str(_fake_site(tmp_path)), env_line=env_line)
-    out = subprocess.run([base, "-I", "-c", code], capture_output=True, text=True, timeout=60)
+    out = subprocess.run([base, "-I", "-c", code], capture_output=True, text=True, timeout=60, check=False)
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout.strip().splitlines()[-1])
 
@@ -74,9 +74,9 @@ def test_an_existing_pythonpath_is_kept_after_the_parent_entries(tmp_path):
 
 
 def test_server_env_gains_pythonpath_but_no_secrets(monkeypatch):
-    import tools.environments.local as local
+    from tools.environments import local
     monkeypatch.setattr(local, "served_profile_child_env", lambda **kw: {"PATH": "/bin"})
-    monkeypatch.setattr(mac, "_cfg", lambda: {})
+    monkeypatch.setattr(mac, "_cfg", dict)
     monkeypatch.setattr(mac._rt, "_profile_name", lambda: "default")
     monkeypatch.setattr(preflight, "site_packages_entries", lambda paths=None: ["/venv/site-packages"])
     env = mac._server_env()

@@ -7,7 +7,7 @@ Root causes pinned here: ``run_agent._dispatch_delegate_task`` (the live path fo
 import pytest
 
 # Fixtures and helpers of the resume suite (real SessionDB, real AIAgent, recorded model loop).
-from tests.tools.test_delegate_resume import _run, agents, db  # noqa: F401
+from tests.tools.test_delegate_resume import _run, agents, db
 
 
 def test_model_dispatch_forwards_resume_session_id_and_mode(monkeypatch):
