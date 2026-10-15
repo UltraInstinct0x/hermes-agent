@@ -18,8 +18,8 @@ from tools.bot_desktop.macos import consent, server
 from tests.tools._macos_bot_screen_fakes import FakeCua, png_bytes
 from tests.tools.test_bot_desktop_macos_rfb import _Viewer, _decode_zrle
 
-ALLOW = lambda summary, timeout_s=30: consent.Consent(True, "allowed")  # noqa: E731
-DENY = lambda summary, timeout_s=30: consent.Consent(False, "denied")  # noqa: E731
+ALLOW = lambda summary, timeout_s=30: consent.Consent(True, "allowed")
+DENY = lambda summary, timeout_s=30: consent.Consent(False, "denied")
 LEFT = 1
 
 
@@ -246,7 +246,7 @@ def test_the_primary_display_changing_resolution_reaches_the_viewer_as_a_resize(
             await v.request(incremental=True)
             try:
                 rects = await v.read_update(timeout=0.5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             if any(r[4] == rfb.ENC_EXT_DESKTOP_SIZE for r in rects):
                 v.close()
