@@ -547,8 +547,20 @@ def _retire_leading_drops(kept: list[dict], leading: list[dict]) -> None:
         _remember_absorbed_row(kept[0], dropped, folded=False)
 
 
+def _assistant_marker_kinds() -> frozenset[str]:
+    """``display_kind`` values of assistant rows that are standalone transcript markers, not model turns.
+    Such a row is its own addressable bubble: merging it into a neighbour drops its display_kind and
+    display_metadata, and the retired original is later rewound out of the paged history. A new kind is
+    one more entry here. (Lazy import: hermes_state_common pulls in the compressor.)"""
+    from agent.turn_failure_copy import FAILED_TURN_DISPLAY_KIND
+    from hermes_state_common import CRON_NOTICE_DISPLAY_KIND
+
+    return frozenset({CRON_NOTICE_DISPLAY_KIND, FAILED_TURN_DISPLAY_KIND})
+
+
 def _merge_consecutive_assistants(messages: list[dict]) -> tuple[list[dict], int]:
-    """Pass 0: merge consecutive assistant turns (codex interims exempt)."""
+    """Pass 0: merge consecutive assistant turns (codex interims and display markers exempt)."""
+    marker_kinds = _assistant_marker_kinds()
     repairs = 0
     collapsed: list[dict] = []
     for msg in messages:
@@ -557,6 +569,7 @@ def _merge_consecutive_assistants(messages: list[dict]) -> tuple[list[dict], int
             prev is not None and prev.get("role") == "assistant"
             and isinstance(msg, dict) and msg.get("role") == "assistant"
             and not _is_codex_interim(msg) and not _is_codex_interim(prev)
+            and msg.get("display_kind") not in marker_kinds and prev.get("display_kind") not in marker_kinds
         ):
             # A provisional verification candidate is superseded, not unioned.
             if prev.get("finish_reason") in {"verification_required", "verify_hook_continue"}:
