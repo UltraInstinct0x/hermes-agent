@@ -8,7 +8,7 @@ it has served nobody and has nothing to do for ``gateway.unmanaged_idle_exit_sec
 
 - no attached client (live ticketed WebSocket, outstanding ticket, or recent HTTP/WS activity);
 - no messaging adapter configured, connected or reconnecting (any profile);
-- no runnable cron job and no kanban task the dispatcher must act on;
+- no runnable cron job in a home this gateway ticks and no kanban task the dispatcher must act on;
 - no queued/started admission, live managed worker, in-flight agent/cron/API run, background
   process or async delegation, active heartbeat/loop, pending handoff or hosted-room task.
 
@@ -86,10 +86,13 @@ def _messaging_busy(runner) -> str | None:
 
 
 def _served_homes(runner) -> list[Path]:
-    from gateway.run import _cron_tick_profile_homes
+    from gateway.run import _cron_profile_gate, _cron_tick_profile_homes
     from gateway.session_authorities import all_authorities
     homes = {Path(a.profile_id) for a in all_authorities(runner)}
-    homes.update(Path(h) for _name, h in _cron_tick_profile_homes(runner.config))
+    # Tick homes count only where the ticker would tick them: a home another live gateway owns is its
+    # work, not ours (a standalone named launch otherwise waits on root's cron forever).
+    homes.update(Path(h) for name, h in _cron_tick_profile_homes(runner.config)
+                 if _cron_profile_gate(name, Path(h)))
     return sorted(homes)
 
 
