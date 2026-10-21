@@ -19,7 +19,7 @@ from hermes_state import SessionDB
 from hermes_state_runtime import admit_session_input, begin_runtime_epoch, cancel_session_input
 
 
-def _runner(tmp_path, monkeypatch, *, window=0.2):
+def _runner(tmp_path, monkeypatch, *, window=0.2, real_gate=False):
     home = tmp_path / "home"
     home.mkdir()
     db = SessionDB(db_path=home / "state.db")
@@ -38,6 +38,10 @@ def _runner(tmp_path, monkeypatch, *, window=0.2):
         _active_work_count=lambda: 0, _scale_to_zero_has_live_background_work=lambda: False, stop=stop)
     monkeypatch.setattr(run_idle_exit, "idle_exit_seconds", lambda r: window)
     monkeypatch.setattr("gateway.run._cron_tick_profile_homes", lambda config: [("default", home)])
+    # _served_homes filters tick homes through the ticker's own gate; pin it so the predicate never
+    # probes real gateway liveness (the gate itself is covered in test_cron_profile_gate.py).
+    if not real_gate:
+        monkeypatch.setattr("gateway.run._cron_profile_gate", lambda name, home: True)
     monkeypatch.setattr(run_idle_exit, "_kanban_busy", lambda: None)
     monkeypatch.setattr(run_idle_exit, "_store_gates_busy", lambda homes: None)
     run_idle_exit.note_client_activity(runner)
@@ -107,4 +111,101 @@ def test_secondary_local_session_adapter_does_not_count_as_messaging(tmp_path, m
         assert "telegram" in run_idle_exit.busy_reason(runner, window=0.2)
     finally:
         secondary_db.close()
+        db.close()
+
+
+def _tick_home_with_job(tmp_path, monkeypatch, runner, home, name="root", **job):
+    """A tick home that is NOT one of this gateway's authorities, holding one cron job."""
+    other = tmp_path / name
+    other.mkdir()
+    from cron.jobs import create_job, update_job, use_cron_store
+    with use_cron_store(other):
+        created = create_job("ping", "every 1h", name="j")
+        if job:
+            update_job(created["id"], job)
+    monkeypatch.setattr("gateway.run._cron_tick_profile_homes",
+                        lambda config: [("default", other), ("self", home)])
+    return other
+
+
+def test_tick_home_another_live_gateway_owns_does_not_keep_it_up(tmp_path, monkeypatch):
+    """Root's scheduled jobs belong to root's gateway when it is live: the ticker stands down for that
+    home, so the idle probe must not count it either (it otherwise never exits on a host with root cron)."""
+    runner, home, db, _stops = _runner(tmp_path, monkeypatch)
+    try:
+        other = _tick_home_with_job(tmp_path, monkeypatch, runner, home)
+        gate_calls = []
+
+        def gate(name, h):
+            gate_calls.append((name, h))
+            return h != other  # another live gateway owns `other`
+        monkeypatch.setattr("gateway.run._cron_profile_gate", gate)
+        assert run_idle_exit.busy_reason(runner, window=0.2) is None
+        assert ("default", other) in gate_calls
+    finally:
+        db.close()
+
+
+def test_tick_home_nobody_else_ticks_keeps_it_up(tmp_path, monkeypatch):
+    """Root gateway down: the gate keeps root's home, this process is its only ticker, so it stays up."""
+    runner, home, db, _stops = _runner(tmp_path, monkeypatch)
+    try:
+        other = _tick_home_with_job(tmp_path, monkeypatch, runner, home)
+        assert run_idle_exit.busy_reason(runner, window=0.2) == f"cron jobs scheduled in {other}"
+    finally:
+        db.close()
+
+
+def test_gate_probe_failure_counts_the_home_as_work(tmp_path, monkeypatch):
+    """Fail closed through the REAL gate: a raising liveness probe ticks the home, so it is busy."""
+    from gateway import status as gateway_status
+
+    runner, home, db, _stops = _runner(tmp_path, monkeypatch, real_gate=True)
+    try:
+        other = _tick_home_with_job(tmp_path, monkeypatch, runner, home)
+
+        def boom(**_kw):
+            raise RuntimeError("probe exploded")
+        monkeypatch.setattr(gateway_status, "resolve_gateway_liveness", boom)
+        assert run_idle_exit.busy_reason(runner, window=0.2) == f"cron jobs scheduled in {other}"
+    finally:
+        db.close()
+
+
+def test_own_and_served_homes_count_even_when_the_gate_says_another_owns_them(tmp_path, monkeypatch):
+    """Authorities (the launch profile, multiplexed profiles this process serves) are unconditional."""
+    runner, home, db, _stops = _runner(tmp_path, monkeypatch)
+    try:
+        monkeypatch.setattr("gateway.run._cron_profile_gate", lambda name, h: False)
+        from cron.jobs import create_job, use_cron_store
+        with use_cron_store(home):
+            create_job("ping", "every 1h", name="own")
+        assert run_idle_exit.busy_reason(runner, window=0.2) == f"cron jobs scheduled in {home}"
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("job", [{"enabled": False, "state": "paused"}, {"state": "completed"}])
+def test_paused_or_finished_own_jobs_do_not_keep_it_up(tmp_path, monkeypatch, job):
+    runner, home, db, _stops = _runner(tmp_path, monkeypatch)
+    try:
+        from cron.jobs import create_job, update_job, use_cron_store
+        with use_cron_store(home):
+            created = create_job("ping", "every 1h", name="own")
+            update_job(created["id"], job)
+        assert run_idle_exit.busy_reason(runner, window=0.2) is None
+    finally:
+        db.close()
+
+
+def test_in_flight_cron_job_keeps_it_up_even_for_a_dropped_home(tmp_path, monkeypatch):
+    """A job executing in this process is process-global work, checked before any home filter."""
+    runner, _home, db, _stops = _runner(tmp_path, monkeypatch)
+    try:
+        monkeypatch.setattr("gateway.run._cron_profile_gate", lambda name, h: False)
+        monkeypatch.setattr("cron.scheduler.get_running_job_ids", lambda: frozenset({"job-1"}))
+        assert run_idle_exit.busy_reason(runner, window=0.2) == "cron job running"
+        monkeypatch.setattr("cron.scheduler.get_running_job_ids", lambda: frozenset())
+        assert run_idle_exit.busy_reason(runner, window=0.2) is None
+    finally:
         db.close()
