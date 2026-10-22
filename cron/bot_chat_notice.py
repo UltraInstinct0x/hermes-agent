@@ -68,4 +68,11 @@ def deliver_bot_chat_notice(job: dict, content: str, home: Path, key: str, targe
     receipts[target] = {"status": "settled", "delivery_id": key}
     logger.info("Job '%s': Bot Chat notice %s for %s %s", job_id, key, target,
                 "posted" if wrote else "already present")
+    # A new result row is news the phone never sees otherwise (no agent turn, no gateway send).
+    # Only once per row (``wrote``), never for failure diagnostics.
+    if wrote and not for_failure:
+        from cron.bot_chat_push import notify_phone
+        status, detail = notify_phone(home, f"cron-{key}", text)
+        logger.info("Job '%s': phone push for notice %s: %s%s", job_id, key, status,
+                    f" ({detail})" if detail else "")
     return None
