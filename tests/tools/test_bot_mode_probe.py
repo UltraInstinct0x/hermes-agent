@@ -378,3 +378,14 @@ def test_roster_resolves_default_to_root_home_over_stray_directory(tmp_path):
     assert homes["researcher"] == home / "profiles" / "researcher"
     names = [name for name, _ in roster]
     assert names.count("default") == 1
+
+
+def test_recipient_answers_in_its_turn_not_via_message_agent(tmp_path):
+    """The delivery runner returns the recipient's final answer to the sender (bot_mode_dm._wait_live_dm prints
+    the settled record's reply). Telling the recipient to ALSO message_agent back delivered every reply twice."""
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    section = bot_mode_probe.get_bot_mode_protocol_section(_make_bot_profile(home, "coder", managed=True))
+    assert "IS the reply" in section
+    assert "do NOT call message_agent to answer them" in section
+    assert "reply concisely via message_agent" not in section
