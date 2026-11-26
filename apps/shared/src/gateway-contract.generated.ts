@@ -3024,7 +3024,7 @@ export interface RequestAnswerParams {
 }
 export interface RequestAnswerResult {
   status: ClarifyLockStatus
-  answered_by: AnsweredBy
+  answered_by?: AnsweredBy | null
   settlement?: HumanRequestRow | null
 }
 export interface ApprovalPendingParams {

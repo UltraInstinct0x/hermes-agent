@@ -1296,15 +1296,20 @@ def _(rid, params: dict) -> dict:
 @method("request.answer")
 @_profile_scoped
 def _(rid, params: dict) -> dict:
-    """Answer an exact ledger request, without attaching to its session."""
-    ledger_id = params.get("id")
+    """Answer by ledger ID or exact server-request ID, without attaching to its session."""
+    request_id = params.get("id")
     result = params.get("result")
-    if not isinstance(ledger_id, str) or not ledger_id or not isinstance(result, dict):
+    if not isinstance(request_id, str) or not request_id or not isinstance(result, dict):
         return _err(rid, 4002, "id and an object result required")
     from tui_gateway import client_identity, human_requests, server_requests
     transport = _caller_transport()
+    if not request_id.startswith("v1:"):
+        frame = {"jsonrpc": "2.0", "id": request_id, "result": result}
+        answered = server_requests.resolve_response(frame, transport, via=human_requests.VIA_REQUEST_ANSWER)
+        return _ok(rid, {"status": "ok" if answered or _relay_compute_host_response(frame) else "expired"})
+
     try:
-        accepted, settlement = server_requests.answer_ledger(get_hermes_home(), ledger_id, result, transport)
+        accepted, settlement = server_requests.answer_ledger(get_hermes_home(), request_id, result, transport)
     except ValueError as exc:
         return _err(rid, 4002, str(exc))
     except human_requests.STORE_ERRORS:

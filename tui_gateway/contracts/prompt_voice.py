@@ -290,14 +290,14 @@ method("clarify.lock", params=ClarifyLockParams, result=ClarifyLockResult,
 
 
 class RequestAnswerParams(Params):
-    id: str  # exact ledger_id of the open request
+    id: str  # exact ledger_id or legacy server-request id
     result: dict[str, JsonValue]
     profile: str | None = None
 
 
 class RequestAnswerResult(Result):
     status: ClarifyLockStatus
-    answered_by: AnsweredBy
+    answered_by: AnsweredBy | None = None
     settlement: HumanRequestRow | None = None
 
 

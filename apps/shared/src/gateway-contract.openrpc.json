@@ -34191,7 +34191,15 @@
             "$ref": "#/components/schemas/ClarifyLockStatus"
           },
           "answered_by": {
-            "$ref": "#/components/schemas/AnsweredBy"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnsweredBy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "settlement": {
             "anyOf": [
@@ -34206,8 +34214,7 @@
           }
         },
         "required": [
-          "status",
-          "answered_by"
+          "status"
         ],
         "title": "RequestAnswerResult",
         "type": "object"

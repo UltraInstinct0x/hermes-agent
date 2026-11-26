@@ -118,7 +118,8 @@ def test_exact_id_rpc_returns_one_winner_without_an_attached_chat(env, monkeypat
             "params": {"id": request_id, "result": {"choice": choice}},
         }, _identified(f"ios-{rid}", f"Phone {rid}"))
 
-    assert answer(3, "once", frame["id"])["error"]["message"] == "no longer pending"
+    wrong_profile = ledger_id.replace(":default:", ":other:")
+    assert answer(3, "once", wrong_profile)["error"]["message"] == "no longer pending"
     assert answer(4, "invalid")["error"]["code"] == 4002
     assert server_requests.answer_ledger(env.home, ledger_id, {"choice": "deny"}) == (False, None)
     assert not releases
@@ -139,6 +140,39 @@ def test_exact_id_rpc_returns_one_winner_without_an_attached_chat(env, monkeypat
     assert winner["answered_by"] == won["result"]["answered_by"]
     assert releases == [{"choice": winner["outcome"]}]
     assert [row["ledger_id"] for row in human_requests.list_requests(home)["open"]] == [other["params"]["ledger_id"]]
+
+
+@pytest.mark.parametrize(("method", "params", "result"), [
+    ("approval", _approval_params(), {"choice": "once"}),
+    ("secret", {"env_var": "TEST_VALUE", "prompt": "Enter a value"}, {"value": "test-value"}),
+])
+def test_legacy_raw_id_rpc_settles_and_attributes_the_winner(env, monkeypatch, method, params, result):
+    from tui_gateway import server
+
+    monkeypatch.setattr(server_requests, "_write", env.frames.append)
+    monkeypatch.setattr(server_requests, "_emit", lambda event, sid, payload: env.events.append((event, sid, payload)))
+    releases = []
+    for sid in ("first", "second"):
+        server_requests.send_async(method, sid, params, releases.append)
+    frame, other = env.frames
+
+    def answer(id, client_id):
+        return server.dispatch({
+            "jsonrpc": "2.0", "id": 1, "method": "request.answer",
+            "params": {"id": id, "result": result},
+        }, _identified(client_id, "Mac", "desktop"))["result"]
+
+    assert answer("all", "other-device") == {"status": "expired"}
+    assert answer(frame["id"], "desktop-main") == {"status": "ok"}
+    assert answer(frame["id"], "other-device") == {"status": "expired"}
+    assert releases == [result]
+    (resolved,) = _events(env, "request.resolved")
+    winner = {"client_id": "desktop-main", "label": "Mac", "kind": "desktop"}
+    assert resolved["id"] == frame["id"] and resolved["answered_by"] == winner
+    ledger = human_requests.list_requests(env.home)
+    assert ledger["recent"][0]["answered_by"] == winner
+    assert ledger["recent"][0]["answered_via"] == "request.answer"
+    assert [row["request_id"] for row in ledger["open"]] == [other["id"]]
 
 
 def test_exact_id_cannot_beat_an_external_queue_winner(env):
