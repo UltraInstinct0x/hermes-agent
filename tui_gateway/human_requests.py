@@ -25,13 +25,16 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
 import sys
 import threading
 import time
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import quote
 
+from hermes_cli.install_identity import get_install_id
 from tui_gateway.client_identity import UNKNOWN, ClientIdentity
 
 logger = logging.getLogger(__name__)
@@ -55,6 +58,8 @@ KIND_BY_METHOD = {
     "vault.code": "secret",
 }
 REDACTED_KINDS = frozenset({"sudo", "secret"})
+ANSWERABLE_KINDS = frozenset({"approval", "clarify"})
+_REQUEST_ID = re.compile(r"srq-[0-9a-f]{12}")
 
 OPEN = "open"
 ANSWERED = "answered"
@@ -274,6 +279,24 @@ def _latest_answers(conn: sqlite3.Connection, request_id: str) -> dict[str, str 
     return {r["question_id"]: r["answer"] for r in rows}
 
 
+def ledger_id_for(profile: str, request_id: str) -> str | None:
+    source = get_install_id()
+    if source and _REQUEST_ID.fullmatch(request_id):
+        return f"v1:{source}:{quote(profile, safe='')}:{request_id}"
+    return None
+
+
+def request_id_for(ledger_id: str) -> str | None:
+    parts = ledger_id.split(":")
+    if len(parts) != 4:
+        return None
+    version, source, profile, request_id = parts
+    if (version == "v1" and source and profile
+            and _REQUEST_ID.fullmatch(request_id) and source == get_install_id()):
+        return request_id
+    return None
+
+
 def _row_to_wire(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
     answered_by = None
     if row["answered_by_client_id"] is not None:
@@ -282,6 +305,7 @@ def _row_to_wire(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
     answers = _latest_answers(conn, row["request_id"]) if row["kind"] == "clarify" else {}
     return {
         "request_id": row["request_id"], "kind": row["kind"], "profile": row["profile"],
+        **({"ledger_id": ledger_id} if (ledger_id := ledger_id_for(row["profile"], row["request_id"])) else {}),
         "bot_key": row["bot_key"], "session_id": row["session_id"], "session_key": row["session_key"],
         "call_id": row["call_id"], "prompt": row["prompt"],
         "choices": json.loads(row["choices_json"]) if row["choices_json"] else None,
@@ -327,9 +351,22 @@ def list_requests(home: Path, *, answered_limit: int = ANSWERED_LIST_DEFAULT) ->
             conn.close()
 
 
+def answer_settlement(home: Path, ledger_id: str, request_id: str) -> dict[str, Any] | None:
+    with _write_lock:
+        conn = _connect(home)
+        try:
+            _sweep_once(conn, home)
+            row = conn.execute("SELECT * FROM human_requests WHERE request_id = ?", (request_id,)).fetchone()
+            if row is not None and row["state"] != OPEN and ledger_id_for(row["profile"], request_id) == ledger_id:
+                return _row_to_wire(conn, row)
+        finally:
+            conn.close()
+    return None
+
+
 def history(home: Path, *, session_id: str | None = None, kind: str | None = None,
             states: Iterable[str] | None = None, limit: int = HISTORY_LIMIT_DEFAULT,
-            before: float | None = None) -> dict[str, Any]:
+            before: float | None = None, before_id: str | None = None) -> dict[str, Any]:
     """Newest-first page of the ledger. ``before`` is the ``created_at`` cursor of the previous page's last row."""
     limit = max(1, min(int(limit), HISTORY_LIMIT_MAX))
     where, args = ["1 = 1"], []
@@ -343,7 +380,10 @@ def history(home: Path, *, session_id: str | None = None, kind: str | None = Non
         wanted = list(states)
         where.append(f"state IN ({','.join('?' for _ in wanted)})")
         args += wanted
-    if before is not None:
+    if before is not None and before_id is not None:
+        where.append("(created_at < ? OR (created_at = ? AND request_id < ?))")
+        args += [before, before, before_id]
+    elif before is not None:
         where.append("created_at < ?")
         args.append(before)
     with _write_lock:
@@ -351,7 +391,8 @@ def history(home: Path, *, session_id: str | None = None, kind: str | None = Non
         try:
             _sweep_once(conn, home)
             rows = conn.execute(
-                f"SELECT * FROM human_requests WHERE {' AND '.join(where)} ORDER BY created_at DESC LIMIT ?",
+                f"SELECT * FROM human_requests WHERE {' AND '.join(where)} "
+                "ORDER BY created_at DESC, request_id DESC LIMIT ?",
                 (*args, limit + 1)).fetchall()
             page = [_row_to_wire(conn, r) for r in rows[:limit]]
             return {"requests": page, "next_before": page[-1]["created_at"] if len(rows) > limit else None}
@@ -386,10 +427,11 @@ class LedgerEntry:
     """What ``server_requests`` keeps on an open request: its ledger kind and, when the ledger is wired for
     its session, where the row lives. ``home`` None means events only (no database)."""
 
-    __slots__ = ("home", "kind", "recorded", "session_id")
+    __slots__ = ("home", "kind", "ledger_id", "recorded", "session_id")
 
     def __init__(self, kind: str, home: Path | None, session_id: str) -> None:
         self.kind, self.home, self.session_id, self.recorded = kind, home, session_id, False
+        self.ledger_id: str | None = None
 
 
 class AnswerNote:
@@ -432,12 +474,14 @@ def track_open(req: Any, ctx: dict | None) -> LedgerEntry | None:
         return entry
     expires_at = req.expires_at if req.expires_at is not None else (
         _approval_expiry(req.created_at) if kind == "approval" else None)
+    req.expires_at = expires_at
     prompt, choices = _prompt_and_choices(req.method, req.params)
     try:
         record_open(ctx["home"], request_id=req.id, kind=kind, profile=ctx["profile"], session_id=ctx["session_id"],
                     session_key=ctx["session_key"], prompt=prompt, choices=choices, created_at=req.created_at,
                     expires_at=expires_at)
         entry.recorded = True
+        entry.ledger_id = ledger_id_for(ctx["profile"], req.id)
     except STORE_ERRORS:
         logger.warning("human_requests: could not record request %s", req.id, exc_info=True)
     return entry
@@ -450,7 +494,7 @@ def _settled_outcome(kind: str, state: str, result: dict | None, note: AnswerNot
     if state != ANSWERED:
         return None
     if kind == "approval":
-        choice = note.choice if note is not None and note.choice else result.get("choice")
+        choice = result.get("choice") or (note.choice if note is not None else None)
         return clip(choice, 32) if isinstance(choice, str) and choice else None
     if kind == "clarify":
         return str(result.get("outcome") or "submitted")
@@ -467,6 +511,8 @@ def track_settle(req: Any, state: str, *, reason: str | None = None, by: ClientI
     if entry is None:
         return None
     note: AnswerNote | None = req.answer_note
+    if note is not None and result and result.get("choice") != note.choice:
+        note = None
     answered = state == ANSWERED
     who = by or (note.by if note is not None else UNKNOWN)
     how = via or (note.via if note is not None else VIA_EXTERNAL)
@@ -482,8 +528,11 @@ def track_settle(req: Any, state: str, *, reason: str | None = None, by: ClientI
             logger.warning("human_requests: could not settle request %s", req.id, exc_info=True)
     if not answered:
         return None
-    return resolved_payload(request_id=req.id, method=req.method, kind=entry.kind, session_id=req.sid,
-                            outcome=outcome, answers=answers, answered_by=who, at=at)
+    payload = resolved_payload(request_id=req.id, method=req.method, kind=entry.kind, session_id=req.sid,
+                               outcome=outcome, answers=answers, answered_by=who, at=at)
+    if entry.ledger_id:
+        payload["ledger_id"] = entry.ledger_id
+    return payload
 
 
 def track_lock(req: Any, question_id: str, answer: str | None, by: ClientIdentity) -> None:

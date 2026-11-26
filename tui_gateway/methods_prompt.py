@@ -1294,21 +1294,25 @@ def _(rid, params: dict) -> dict:
 
 
 @method("request.answer")
+@_profile_scoped
 def _(rid, params: dict) -> dict:
-    """Answer an open server→client request from a client that did not receive it (a Bot Mode room
-    window answering a member's prompt mirrored from its resume snapshot). The response-frame path is
-    the norm; this is the proxy for it. ``expired`` when the request already ended."""
-    request_id = str(params.get("id") or "")
+    """Answer an exact ledger request, without attaching to its session."""
+    ledger_id = params.get("id")
     result = params.get("result")
-    if not request_id or not isinstance(result, dict):
+    if not isinstance(ledger_id, str) or not ledger_id or not isinstance(result, dict):
         return _err(rid, 4002, "id and an object result required")
-    from tui_gateway import human_requests, server_requests
-    frame = {"jsonrpc": "2.0", "id": request_id, "result": result}
-    answered = server_requests.resolve_response(
-        frame, _caller_transport(), via=human_requests.VIA_REQUEST_ANSWER)
-    if answered or _relay_compute_host_response(frame):
-        return _ok(rid, {"status": "ok"})
-    return _ok(rid, {"status": "expired"})
+    from tui_gateway import client_identity, human_requests, server_requests
+    transport = _caller_transport()
+    try:
+        accepted, settlement = server_requests.answer_ledger(get_hermes_home(), ledger_id, result, transport)
+    except ValueError as exc:
+        return _err(rid, 4002, str(exc))
+    except human_requests.STORE_ERRORS:
+        return _err(rid, 5310, "ledger unavailable")
+    if not accepted:
+        return _err(rid, 4065, "no longer pending", {"settlement": settlement} if settlement else None)
+    answerer = client_identity.identity_for(transport).as_wire()
+    return _ok(rid, {"status": "ok", "answered_by": answerer, "settlement": settlement})
 
 
 @method("approval.pending")

@@ -73,6 +73,33 @@ def test_get_config_for_named_profile_expands_only_its_own_secrets(client, two_h
     assert probe_a["a_ref"] == A_VAL and probe_a["b_ref"] == "${B_ONLY_TOKEN}"
 
 
+def test_requests_rest_reads_only_the_named_profile_and_pages_closed_rows(client, two_homes, monkeypatch):
+    import time
+    from hermes_cli import web_server_profiles
+    from tui_gateway import human_requests
+
+    root, other = two_homes
+    monkeypatch.setattr(web_server_profiles, "_resolve_profile_dir", {"b": other, "default": root}.__getitem__)
+    now = time.time()
+    for home, profile, id in ((root, "default", "srq-111111111111"), (other, "b", "srq-222222222222"),
+                              (other, "b", "srq-333333333333")):
+        human_requests.record_open(home, request_id=id, kind="approval", profile=profile, session_id=id,
+                                   session_key=id, prompt="Review", choices=["deny"], created_at=now, expires_at=None)
+        human_requests.record_settled(home, request_id=id, state="answered", outcome="deny", at=now)
+
+    assert not client.get("/api/profiles/b/requests", headers={"X-Hermes-Session-Token": "wrong"}).is_success
+    listing = client.get("/api/profiles/b/requests")
+    assert listing.status_code == 200
+    assert {row["profile"] for row in listing.json()["recent"]} == {"b"}
+    page = client.get("/api/profiles/b/requests?history=true&limit=1").json()
+    [first] = page["requests"]
+    assert first["request_id"] == "srq-333333333333"
+    following = client.get("/api/profiles/b/requests", params={
+        "history": "true", "before": page["next_before"], "before_id": first["request_id"],
+    }).json()
+    assert [row["request_id"] for row in following["requests"]] == ["srq-222222222222"]
+
+
 def test_console_send_for_named_profile_does_not_write_process_env(two_homes, monkeypatch):
     """``send`` loads the target profile's ``.env`` for the gateway config loader; inside a
     multi-profile host that must land in the request's scope, never ``os.environ``."""

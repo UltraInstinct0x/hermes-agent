@@ -10,6 +10,7 @@ import os
 import sqlite3
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -89,6 +90,74 @@ def test_approval_answered_by_response_frame_names_the_answerer(env):
     (resolved,) = _events(env, "request.resolved")
     assert resolved["id"] == request_id and resolved["choice"] == "once" and resolved["session_id"] == "s1"
     assert resolved["answered_by"] == {"client_id": "ios-7f3a", "label": "Gokhan's iPhone", "kind": "ios"}
+    ledger_id = env.frames[0]["params"]["ledger_id"]
+    assert resolved["ledger_id"] == ledger_id == human_requests.list_requests(env.home)["recent"][0]["ledger_id"]
+
+
+def test_exact_id_rpc_returns_one_winner_without_an_attached_chat(env, monkeypatch):
+    from hermes_constants import get_hermes_home
+    from tui_gateway import server
+
+    home = get_hermes_home()
+    monkeypatch.setattr(server_requests, "_write", env.frames.append)
+    monkeypatch.setattr(server_requests, "_emit", lambda event, sid, payload: env.events.append((event, sid, payload)))
+    monkeypatch.setattr(server_requests, "_ledger_context", lambda sid: {
+        "home": home, "profile": "default", "session_id": sid, "session_key": sid})
+    releases = []
+    for sid in ("first", "second"):
+        server_requests.send_async("approval", sid, _approval_params(sid), releases.append)
+    frame, other = env.frames
+    ledger_id = frame["params"]["ledger_id"]
+    assert server_requests.open_requests("first")[0]["params"]["ledger_id"] == ledger_id
+    assert frame["params"]["expires_at"] > time.time()
+    assert human_requests.list_requests(home)["open"][0]["ledger_id"] == ledger_id
+
+    def answer(rid, choice, request_id=ledger_id):
+        return server.dispatch({
+            "jsonrpc": "2.0", "id": rid, "method": "request.answer",
+            "params": {"id": request_id, "result": {"choice": choice}},
+        }, _identified(f"ios-{rid}", f"Phone {rid}"))
+
+    assert answer(3, "once", frame["id"])["error"]["message"] == "no longer pending"
+    assert answer(4, "invalid")["error"]["code"] == 4002
+    assert server_requests.answer_ledger(env.home, ledger_id, {"choice": "deny"}) == (False, None)
+    assert not releases
+
+    ready = threading.Barrier(2)
+
+    def race(rid, choice):
+        ready.wait(timeout=5)
+        return answer(rid, choice)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        replies = [pool.submit(race, 1, "once"), pool.submit(race, 2, "deny")]
+        won, lost = sorted((reply.result(timeout=5) for reply in replies), key=lambda r: "error" in r)
+    assert lost["error"]["message"] == "no longer pending"
+    winner = won["result"]["settlement"]
+    assert lost["error"]["data"]["settlement"] == winner
+    assert won["result"]["answered_by"]["client_id"] == f"ios-{won['id']}"
+    assert winner["answered_by"] == won["result"]["answered_by"]
+    assert releases == [{"choice": winner["outcome"]}]
+    assert [row["ledger_id"] for row in human_requests.list_requests(home)["open"]] == [other["params"]["ledger_id"]]
+
+
+def test_exact_id_cannot_beat_an_external_queue_winner(env):
+    claiming = threading.Event()
+
+    def claim(_):
+        claiming.set()
+        return False  # the owning queue already committed another surface's answer
+
+    settle = server_requests.send_async("approval", "s1", _approval_params(), lambda _: None, claim_result=claim)
+    ledger_id = env.frames[0]["params"]["ledger_id"]
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        attempt = pool.submit(server_requests.answer_ledger, env.home, ledger_id, {"choice": "once"})
+        assert claiming.wait(timeout=5)
+        settle("resolved", "deny")
+        accepted, winner = attempt.result(timeout=5)
+    assert not accepted
+    assert winner["outcome"] == "deny" and winner["answered_by"]["client_id"] == "unknown"
+    assert _events(env, "request.resolved")[0]["ledger_id"] == ledger_id
 
 
 def test_approval_answered_over_rpc_is_attributed_and_still_cancels_for_old_clients(env):

@@ -41,7 +41,10 @@ import logging
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Callable
+
+from pydantic import ValidationError
 
 from tools.clarify_batch import settle_batch
 from tui_gateway import client_identity, human_requests
@@ -53,12 +56,14 @@ class ServerRequest:
     __slots__ = (
         "answer_note",
         "answered",
+        "claim_result",
         "created_at",
         "declined",
         "event",
         "expires_at",
         "id",
         "ledger",
+        "ledger_done",
         "locked",
         "method",
         "on_result",
@@ -71,7 +76,8 @@ class ServerRequest:
     )
 
     def __init__(self, sid: str, method: str, params: dict, *, qids: list[str] | None = None,
-                 on_result: Callable[[dict | None], None] | None = None, timeout: float | None = None) -> None:
+                 on_result: Callable[[dict | None], None] | None = None, timeout: float | None = None,
+                 claim_result: Callable[[dict], bool] | None = None) -> None:
         self.id = f"srq-{uuid.uuid4().hex[:12]}"
         self.sid = sid
         self.method = method
@@ -84,11 +90,13 @@ class ServerRequest:
         # of a human question, and who answered an approval over RPC (read when the queue settles it).
         self.expires_at = self.created_at + timeout if timeout is not None and timeout > 0 else None
         self.ledger: human_requests.LedgerEntry | None = None
+        self.ledger_done = threading.Event()
         self.answer_note: human_requests.AnswerNote | None = None
         # Batch clarify: question ids still to lock, and the answers locked so far.
         self.qids = list(qids) if qids else None
         self.locked: dict[str, str | None] = {}
         self.on_result = on_result
+        self.claim_result = claim_result
         # Client transports that answered NOT_SHOWN_CODE (no window there shows this session).
         self.declined: set = set()
         # Published but frame not yet written; a cancel in that gap parks its reason in ``withdrawn`` for _register.
@@ -96,13 +104,20 @@ class ServerRequest:
         self.withdrawn: str | None = None
 
     def frame(self) -> dict:
-        return {"jsonrpc": "2.0", "id": self.id, "method": self.method,
-                "params": {"session_id": self.sid, **self.params}}
+        return {"jsonrpc": "2.0", "id": self.id, "method": self.method, "params": self.wire_params()}
+
+    def wire_params(self) -> dict:
+        params = {"session_id": self.sid, **self.params}
+        if (entry := self.ledger) is not None and entry.ledger_id:
+            params["ledger_id"] = entry.ledger_id
+            if self.expires_at is not None:
+                params["expires_at"] = self.expires_at
+        return params
 
     def snapshot(self) -> dict:
         """``open_requests`` entry: the request as sent, plus the batch answers locked so far so a
         reconnecting client restores its ✓ state."""
-        params = {"session_id": self.sid, **self.params}
+        params = self.wire_params()
         if self.locked:
             params["answers"] = dict(self.locked)
         return {"id": self.id, "method": self.method, "params": params}
@@ -110,6 +125,15 @@ class ServerRequest:
 
 _lock = threading.Lock()
 _open: dict[str, ServerRequest] = {}
+_closing: dict[str, ServerRequest] = {}
+
+
+def _take(request_id: str) -> ServerRequest | None:
+    """Move a request from the open index to the closing index under _lock."""
+    req = _open.pop(request_id, None)
+    if req is not None and req.ledger is not None and req.ledger.ledger_id:
+        _closing[request_id] = req
+    return req
 
 # Frame sinks, bound by ``bind_sinks`` from server.py at import time (like the method_ctx split
 # modules): importing server back from here would pick a different module object under the test
@@ -177,7 +201,10 @@ def _unanswerable(method: str, sid: str) -> bool:
 
 
 def _emit_cancel(req: ServerRequest, reason: str) -> None:
-    _emit("request.cancel", req.sid, {"id": req.id, "method": req.method, "reason": reason})
+    payload = {"id": req.id, "method": req.method, "reason": reason}
+    if req.ledger and req.ledger.ledger_id:
+        payload["ledger_id"] = req.ledger.ledger_id
+    _emit("request.cancel", req.sid, payload)
 
 
 def _identity(transport: Any) -> client_identity.ClientIdentity:
@@ -187,7 +214,12 @@ def _identity(transport: Any) -> client_identity.ClientIdentity:
 def _ledger_settle(req: ServerRequest, state: str, **details: Any) -> None:
     """Close *req* in the ledger and broadcast ``request.resolved`` when a person answered. Never called under
     ``_lock``: it writes to the database."""
-    payload = human_requests.track_settle(req, state, **details)
+    try:
+        payload = human_requests.track_settle(req, state, **details)
+    finally:
+        with _lock:
+            _closing.pop(req.id, None)
+            req.ledger_done.set()
     if payload is None:
         return
     from tui_gateway.contracts.registry import ContractViolation
@@ -272,7 +304,7 @@ def send(method: str, sid: str, params: dict, *, timeout: float | None,
         # or it stays in _open forever — replayed to every reconnecting client and reported by
         # pending_kind() as a human still being waited on.
         with _lock:
-            still_open = _open.pop(req.id, None) is req
+            still_open = _take(req.id) is req
         if still_open:
             _emit_cancel(req, "interrupted")
             _ledger_settle(req, human_requests.CANCELLED, reason="interrupted")
@@ -281,7 +313,7 @@ def send(method: str, sid: str, params: dict, *, timeout: float | None,
         # The verdict is the state committed under the lock, never wait()'s return value: a
         # response frame can land after the deadline expires and before this removal, and
         # settlement (resolve_response / lock_answer / cancel) already popped it (#112548).
-        timed_out = _open.pop(req.id, None) is req
+        timed_out = _take(req.id) is req
         answered, result, locked = req.answered, req.result, dict(req.locked)
     if answered:
         return result
@@ -293,23 +325,25 @@ def send(method: str, sid: str, params: dict, *, timeout: float | None,
     return None
 
 
-def send_async(method: str, sid: str, params: dict, on_result: Callable[[dict | None], None]) -> Callable[[str], None]:
+def send_async(method: str, sid: str, params: dict, on_result: Callable[[dict | None], None],
+               *, claim_result: Callable[[dict], bool] | None = None) -> Callable[..., None]:
     """Send one request whose wait is owned elsewhere (the approval queue's own timeout). ``on_result``
     runs on the dispatching thread when the response lands. Returns ``settle(reason)``: call it when
     the underlying wait ends; if the request is still open it is withdrawn with ``request.cancel``."""
     if _unanswerable(method, sid):
         on_result(None)
-        return lambda reason: None
-    req = ServerRequest(sid, method, params, on_result=on_result)
+        return lambda reason, choice=None: None
+    req = ServerRequest(sid, method, params, on_result=on_result, claim_result=claim_result)
     _register(req)
 
-    def settle(reason: str) -> None:
+    def settle(reason: str, choice: str | None = None) -> None:
         with _lock:
-            still_open = _open.pop(req.id, None) is not None
+            still_open = _take(req.id) is not None
         if still_open:
             _emit_cancel(req, reason)
             state = _withdrawal_state(reason)
-            _ledger_settle(req, state, reason=None if state == human_requests.ANSWERED else reason)
+            _ledger_settle(req, state, reason=None if state == human_requests.ANSWERED else reason,
+                           result={"choice": choice} if choice is not None else None)
 
     return settle
 
@@ -337,17 +371,18 @@ def _decline(rid: str, transport: Any) -> bool:
             req.declined.add(transport)
         if not clients or not clients <= req.declined:
             return True
-        _open.pop(rid, None)
+        _take(rid)
         req.result = {"value": json.dumps({"success": False, "error": NOT_SHOWN_MESSAGE})}
         req.answered = True
     if req.on_result is not None:
-        req.on_result(req.result)
+        req.on_result(None if req.claim_result is not None else req.result)
     req.event.set()
     _ledger_settle(req, human_requests.WITHDRAWN, reason="not_shown")
     return True
 
 
-def resolve_response(frame: dict, transport: Any = None, *, via: str = human_requests.VIA_FRAME) -> bool:
+def resolve_response(frame: dict, transport: Any = None, *, via: str = human_requests.VIA_FRAME,
+                     ledger_id: str | None = None, home: Path | None = None) -> bool:
     """Route one client response frame to its open request. False when nothing is waiting for that id
     (already timed out / cancelled, or owned by another process — see the compute-host bridge).
     *transport* is the client connection the frame arrived on (counts a NOT_SHOWN_CODE decline, and names
@@ -364,15 +399,22 @@ def resolve_response(frame: dict, transport: Any = None, *, via: str = human_req
             # another process; say so — a dropped answer used to vanish without a trace.
             logger.debug("server request %s: response dropped, request no longer open", rid)
             return False
+        if ledger_id is not None:
+            if not _owns_ledger_request(req, ledger_id, home):
+                return False
+            _validate_ledger_answer(req, frame["result"])
+        result = frame.get("result")
+        claimed = req.claim_result is not None and isinstance(result, dict) and "error" not in frame
+        if claimed and not req.claim_result(result):
+            return False
         # Removing the request and committing its outcome are one settlement.
         # ``cancel()`` also settles under this lock, so the first side to get
         # here wins instead of a later cancellation overwriting a response.
-        _open.pop(rid, None)
+        _take(rid)
         if "error" in frame:
             logger.debug("server request %s (%s) answered with error: %s", rid, req.method, frame.get("error"))
             req.result, req.answered = None, False
         else:
-            result = frame.get("result")
             req.result = result if isinstance(result, dict) else {}
             if req.qids:
                 # Batch clarify: answers locked early via clarify.lock belong to the final set even when
@@ -380,7 +422,7 @@ def resolve_response(frame: dict, transport: Any = None, *, via: str = human_req
                 # session owner's registry: ``tools.clarify_batch``).
                 req.result = settle_batch(req.locked, req.result)
             req.answered = True
-    if req.on_result is not None:
+    if req.on_result is not None and not claimed:
         req.on_result(req.result)
     req.event.set()
     if req.answered:
@@ -388,6 +430,53 @@ def resolve_response(frame: dict, transport: Any = None, *, via: str = human_req
     else:  # the client answered with an error (no handler for this method): nobody decided anything
         _ledger_settle(req, human_requests.WITHDRAWN, reason="client_error")
     return True
+
+
+def _owns_ledger_request(req: ServerRequest, ledger_id: str, home: Path | None) -> bool:
+    entry = req.ledger
+    return (home is not None and entry is not None and entry.ledger_id == ledger_id and entry.home is not None
+            and entry.home.resolve() == home.resolve())
+
+
+def _validate_ledger_answer(req: ServerRequest, result: dict) -> None:
+    from tui_gateway.contracts.server_requests import ApprovalResult, ClarifyResult
+
+    if req.method not in human_requests.ANSWERABLE_KINDS:
+        raise ValueError("this request must be answered in its chat")
+    try:
+        if req.method == "approval":
+            approval = ApprovalResult.model_validate(result)
+            if req.claim_result is not None and not req.params.get("request_id"):
+                raise ValueError("this request must be answered in its chat")
+            if "all" in result or approval.choice not in req.params.get("choices", []):
+                raise ValueError("choice was not offered for this approval")
+        else:
+            clarify = ClarifyResult.model_validate(result)
+            qids = {question["qid"] for question in req.params.get("questions", [])}
+            if set(clarify.answers or {}) - qids:
+                raise ValueError("unknown question id")
+    except ValidationError:
+        raise ValueError("invalid answer for this request") from None
+
+
+def answer_ledger(home: Path, ledger_id: str, result: dict, transport: Any = None) -> tuple[bool, dict | None]:
+    if (request_id := human_requests.request_id_for(ledger_id)) is None:
+        return False, None
+    with _lock:
+        req = _open.get(request_id) or _closing.get(request_id)
+        if req is not None and not _owns_ledger_request(req, ledger_id, home):
+            return False, None
+    accepted = resolve_response({"id": request_id, "result": result}, transport,
+                                via=human_requests.VIA_REQUEST_ANSWER, ledger_id=ledger_id, home=home)
+    if req is not None:
+        req.ledger_done.wait()
+    try:
+        return accepted, human_requests.answer_settlement(home, ledger_id, request_id)
+    except human_requests.STORE_ERRORS:
+        if not accepted:
+            raise
+        logger.warning("could not read winning ledger settlement for %s", request_id, exc_info=True)
+        return True, None
 
 
 def lock_answer(request_id: str, question_id: str, answer: str | None, *, transport: Any = None) -> list[str] | None:
@@ -405,7 +494,7 @@ def lock_answer(request_id: str, question_id: str, answer: str | None, *, transp
         remaining = [qid for qid in req.qids if qid not in req.locked]
         if not remaining:
             req.result, req.answered = settle_batch(req.locked, ended="submitted"), True
-            _open.pop(request_id, None)
+            _take(request_id)
     if not remaining:
         req.event.set()
     by = _identity(transport)
@@ -424,7 +513,7 @@ def cancel(sid: str | None = None, reason: str = "interrupted", *, method: str |
         targets = [req for req in _open.values()
                    if (sid is None or req.sid == sid) and (method is None or req.method == method)]
         for req in targets:
-            _open.pop(req.id, None)
+            _take(req.id)
             if req.qids is not None:
                 req.result, req.answered = settle_batch(req.locked, ended="cancelled"), True
             else:
@@ -471,4 +560,5 @@ def is_response_frame(obj: Any) -> bool:
 def reset_for_tests() -> None:
     with _lock:
         _open.clear()
+        _closing.clear()
         _answering_clients.clear()

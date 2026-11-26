@@ -43,11 +43,12 @@ class AnsweredBy(Result):
 
 
 class HumanRequestRow(Result):
-    """One ledger row. ``session_id`` is the stored (durable) session id; the request id is what ``request.answer``
+    """One ledger row. ``session_id`` is the stored (durable) session id; the ledger id is what ``request.answer``
     takes. ``answers`` is clarify only (newest lock per question); sudo and secret rows have no prompt, choices or
     answers."""
 
     request_id: str
+    ledger_id: str | None = None
     kind: HumanRequestKind
     profile: str
     bot_key: str | None = None  # gatewayId::profileId; the gateway cannot know it, a client may fill it
@@ -105,6 +106,7 @@ class RequestResolvedPayload(Payload):
     the clarify answers (clipped); both are null for sudo and secret."""
 
     id: str
+    ledger_id: str | None = None
     method: str
     kind: HumanRequestKind
     session_id: str

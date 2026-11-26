@@ -223,9 +223,13 @@ def _await_gateway_decision(session_key: str, notify_cb, approval_data: dict, *,
                 reason = "resolved" if choice is not None else "session_closed"
             else:
                 reason = state
-            for callback in ([settle] if settle is not None else []) + observers:
+            callbacks = ([settle] if settle is not None else []) + [(observer, False) for observer in observers]
+            for callback, include_choice in callbacks:
                 try:
-                    callback(reason)
+                    if include_choice:
+                        callback(reason, choice)
+                    else:
+                        callback(reason)
                 except Exception:
                     logger.debug("approval settle hook failed", exc_info=True)
         return choice

@@ -3,7 +3,7 @@
 ``request.list`` answers "what waits for me anywhere": every open request across ALL sessions of the profile
 (``session.resume`` only replays one session's), plus the most recent closed ones so a client that was away can
 show what happened. ``request.history`` pages the whole ledger. Answering stays on the existing paths (response
-frame, ``approval.respond``, ``clarify.lock``, ``request.answer``); the request id in a row is what
+frame, ``approval.respond``, ``clarify.lock``, ``request.answer``); the ledger id in a row is what
 ``request.answer`` takes, from any client attached to the gateway.
 
 Both are profile-scoped: a multiplexed gateway answers for the profile the caller names. Bodies are rebound onto

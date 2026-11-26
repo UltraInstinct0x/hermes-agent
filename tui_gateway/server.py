@@ -728,15 +728,16 @@ def _emit_approval_request(sid: str, data: dict | None) -> None:
                 _approval.withdraw_gateway_approval(session_key, request_id,
                                                     "the attached client cannot answer approval requests "
                                                     "(update the Hermes app)")
-            return
-        choice = str(result.get("choice") or "deny")
-        _approval.resolve_gateway_approval(session_key, choice, resolve_all=bool(result.get("all")),
-                                           request_id=request_id or None)
 
-    settle = server_requests.send_async("approval", sid, payload, on_result)
+    def claim_result(result: dict) -> bool:
+        choice = str(result.get("choice") or "deny")
+        return bool(_approval.resolve_gateway_approval(session_key, choice, resolve_all=bool(result.get("all")),
+                                                      request_id=request_id or None))
+
+    settle = server_requests.send_async("approval", sid, payload, on_result, claim_result=claim_result)
     # The wait can end between the frame going out and the hook attaching (the client answered by RPC, another
     # surface resolved it): withdraw now, or the request stays in ``open_requests`` for every later resume.
-    if request_id and not _approval.register_gateway_settle(session_key, request_id, settle):
+    if request_id and not _approval.register_gateway_settle(session_key, request_id, settle, include_choice=True):
         settle("resolved")
 
 

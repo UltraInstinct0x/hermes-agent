@@ -11,6 +11,7 @@ from pydantic import Field
 
 from .base import JsonValue, Params, Result, WireEnum
 from .common import OpenModel, PendingApproval, SessionParams
+from .human_requests import AnsweredBy, HumanRequestRow
 from .registry import method
 
 # ── prompt.submit ─────────────────────────────────────────────────────────────────────────────
@@ -289,13 +290,15 @@ method("clarify.lock", params=ClarifyLockParams, result=ClarifyLockResult,
 
 
 class RequestAnswerParams(Params):
-    id: str  # the open server→client request id
+    id: str  # exact ledger_id of the open request
     result: dict[str, JsonValue]
     profile: str | None = None
 
 
 class RequestAnswerResult(Result):
     status: ClarifyLockStatus
+    answered_by: AnsweredBy
+    settlement: HumanRequestRow | None = None
 
 
 method("request.answer", params=RequestAnswerParams, result=RequestAnswerResult,

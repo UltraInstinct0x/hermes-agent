@@ -811,6 +811,27 @@ async def list_profiles_endpoint():
     return await _read_profiles()
 
 
+@router.get("/api/profiles/{name}/requests")
+def profile_requests_endpoint(
+    name: str, history: bool = False, limit: int = Query(default=50, ge=1, le=200),
+    answered_limit: int = Query(default=20, ge=0, le=200), before: float | None = Query(default=None, ge=0),
+    before_id: str | None = Query(default=None, max_length=128),
+):
+    from hermes_cli.web_server_profiles import _resolve_profile_dir
+    from tui_gateway import human_requests
+
+    home = _resolve_profile_dir(name)
+    try:
+        if not history:
+            return human_requests.list_requests(home, answered_limit=answered_limit)
+        return human_requests.history(
+            home, states=(human_requests.ANSWERED, human_requests.EXPIRED, human_requests.WITHDRAWN,
+                          human_requests.CANCELLED, human_requests.LOST_ON_RESTART),
+            limit=limit, before=before, before_id=before_id)
+    except human_requests.STORE_ERRORS:
+        raise HTTPException(status_code=503, detail="request ledger unavailable") from None
+
+
 @router.post("/api/profiles")
 async def create_profile_endpoint(body: ProfileCreate):
     from hermes_cli import profiles as profiles_mod

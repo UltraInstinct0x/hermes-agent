@@ -5350,6 +5350,30 @@
             "title": "Session Id",
             "type": "string"
           },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expires At"
+          },
           "action": {
             "title": "Action",
             "type": "string"
@@ -5518,6 +5542,30 @@
           "session_id": {
             "title": "Session Id",
             "type": "string"
+          },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expires At"
           },
           "request_id": {
             "title": "Request Id",
@@ -11710,6 +11758,30 @@
             "title": "Session Id",
             "type": "string"
           },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expires At"
+          },
           "questions": {
             "items": {
               "$ref": "#/components/schemas/ClarifyQuestion"
@@ -16938,6 +17010,30 @@
             "title": "Session Id",
             "type": "string"
           },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expires At"
+          },
           "profile_key": {
             "title": "Profile Key",
             "type": "string"
@@ -18366,6 +18462,30 @@
           "session_id": {
             "title": "Session Id",
             "type": "string"
+          },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expires At"
           }
         },
         "required": [
@@ -21052,11 +21172,23 @@
       },
       "HumanRequestRow": {
         "additionalProperties": false,
-        "description": "One ledger row. ``session_id`` is the stored (durable) session id; the request id is what ``request.answer``\ntakes. ``answers`` is clarify only (newest lock per question); sudo and secret rows have no prompt, choices or\nanswers.",
+        "description": "One ledger row. ``session_id`` is the stored (durable) session id; the ledger id is what ``request.answer``\ntakes. ``answers`` is clarify only (newest lock per question); sudo and secret rows have no prompt, choices or\nanswers.",
         "properties": {
           "request_id": {
             "title": "Request Id",
             "type": "string"
+          },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
           },
           "kind": {
             "$ref": "#/components/schemas/HumanRequestKind"
@@ -29169,6 +29301,30 @@
             "title": "Session Id",
             "type": "string"
           },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expires At"
+          },
           "action": {
             "title": "Action",
             "type": "string"
@@ -33425,6 +33581,30 @@
             "title": "Session Id",
             "type": "string"
           },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expires At"
+          },
           "start": {
             "anyOf": [
               {
@@ -34009,10 +34189,25 @@
         "properties": {
           "status": {
             "$ref": "#/components/schemas/ClarifyLockStatus"
+          },
+          "answered_by": {
+            "$ref": "#/components/schemas/AnsweredBy"
+          },
+          "settlement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HumanRequestRow"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
-          "status"
+          "status",
+          "answered_by"
         ],
         "title": "RequestAnswerResult",
         "type": "object"
@@ -34023,6 +34218,18 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
           },
           "method": {
             "title": "Method",
@@ -34214,6 +34421,18 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
           },
           "method": {
             "title": "Method",
@@ -35766,6 +35985,30 @@
           "session_id": {
             "title": "Session Id",
             "type": "string"
+          },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expires At"
           },
           "env_var": {
             "title": "Env Var",
@@ -40739,6 +40982,30 @@
             "title": "Session Id",
             "type": "string"
           },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expires At"
+          },
           "beat": {
             "$ref": "#/components/schemas/SetupBeat"
           },
@@ -44767,6 +45034,30 @@
             "title": "Session Id",
             "type": "string"
           },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expires At"
+          },
           "command": {
             "default": "",
             "title": "Command",
@@ -44949,6 +45240,30 @@
             "title": "Session Id",
             "type": "string"
           },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expires At"
+          },
           "accent": {
             "anyOf": [
               {
@@ -45006,6 +45321,30 @@
           "session_id": {
             "title": "Session Id",
             "type": "string"
+          },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expires At"
           },
           "picker": {
             "$ref": "#/components/schemas/ThemePicker"
@@ -45893,6 +46232,30 @@
           "session_id": {
             "title": "Session Id",
             "type": "string"
+          },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expires At"
           },
           "action": {
             "title": "Action",
@@ -46904,6 +47267,30 @@
             "title": "Session Id",
             "type": "string"
           },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expires At"
+          },
           "site": {
             "anyOf": [
               {
@@ -47136,6 +47523,30 @@
             "title": "Session Id",
             "type": "string"
           },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expires At"
+          },
           "origin": {
             "title": "Origin",
             "type": "string"
@@ -47318,6 +47729,30 @@
           "session_id": {
             "title": "Session Id",
             "type": "string"
+          },
+          "ledger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ledger Id"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expires At"
           },
           "backend": {
             "title": "Backend",

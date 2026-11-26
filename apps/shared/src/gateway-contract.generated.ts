@@ -1963,9 +1963,10 @@ export interface RequestListResult {
   recent?: HumanRequestRow[]
   open_count: number
 }
-/** One ledger row. ``session_id`` is the stored (durable) session id; the request id is what ``request.answer`` takes. ``answers`` is clarify only (newest lock per question); sudo and secret rows have no prompt, choices or answers. */
+/** One ledger row. ``session_id`` is the stored (durable) session id; the ledger id is what ``request.answer`` takes. ``answers`` is clarify only (newest lock per question); sudo and secret rows have no prompt, choices or answers. */
 export interface HumanRequestRow {
   request_id: string
+  ledger_id?: string | null
   kind: HumanRequestKind
   profile: string
   bot_key?: string | null
@@ -3023,6 +3024,8 @@ export interface RequestAnswerParams {
 }
 export interface RequestAnswerResult {
   status: ClarifyLockStatus
+  answered_by: AnsweredBy
+  settlement?: HumanRequestRow | null
 }
 export interface ApprovalPendingParams {
   session_id: string
@@ -5455,6 +5458,8 @@ export interface CanonicalBotDeliverResult {
 /** ``answers`` rides only on a reconnect replay (locks the server already accepted; null = skipped). */
 export interface ClarifyRequestParams {
   session_id: string
+  ledger_id?: string | null
+  expires_at?: number | null
   questions: ClarifyQuestion[]
   answers?: Record<string, string | null> | null
 }
@@ -5472,6 +5477,8 @@ export interface ClarifyResult {
 /** ``card`` is the beat's data (``agent/onboarding_flow.py::BEATS``): name, theme, connectors and plugins have their own shape; layout, tour and build carry ``options``. ``tool_call_id`` is the setup_beat call the card belongs to: only that transcript row draws it. */
 export interface SetupBeatRequestParams {
   session_id: string
+  ledger_id?: string | null
+  expires_at?: number | null
   beat: SetupBeat
   question?: string | null
   tool_call_id?: string | null
@@ -5532,6 +5539,8 @@ export interface SetupBuildAnswer {
 /** ``tui_gateway/server.py::_approval_request_payload`` — the command is redacted server-side. */
 export interface ApprovalRequestParams {
   session_id: string
+  ledger_id?: string | null
+  expires_at?: number | null
   request_id: string
   command?: string
   description?: string
@@ -5550,6 +5559,8 @@ export interface ApprovalResult {
 /** Original command, redacted server-side before any password-injection rewrite. */
 export interface SudoRequestParams {
   session_id: string
+  ledger_id?: string | null
+  expires_at?: number | null
   command?: string
 }
 /** The answer to any one-string prompt (sudo, secret, vault prompts, desktop bridges): ``''`` means skipped / declined. */
@@ -5558,36 +5569,50 @@ export interface ValueResult {
 }
 export interface SecretRequestParams {
   session_id: string
+  ledger_id?: string | null
+  expires_at?: number | null
   env_var: string
   prompt: string
   metadata?: Record<string, unknown> | null
 }
 export interface VaultUnlockRequestParams {
   session_id: string
+  ledger_id?: string | null
+  expires_at?: number | null
   backend: string
   display_name: string
 }
 export interface VaultSaveLoginRequestParams {
   session_id: string
+  ledger_id?: string | null
+  expires_at?: number | null
   origin: string
   site: string
 }
 export interface VaultCodeRequestParams {
   session_id: string
+  ledger_id?: string | null
+  expires_at?: number | null
   site?: string | null
   hint?: string | null
 }
 export interface ReadRangeRequestParams {
   session_id: string
+  ledger_id?: string | null
+  expires_at?: number | null
   start?: number | null
   count?: number | null
 }
 export interface EmptyRequestParams {
   session_id: string
+  ledger_id?: string | null
+  expires_at?: number | null
 }
 /** ``tools/drive_preview_tool.py`` and ``tools/annotate_preview_tool.py`` field sets. */
 export interface PreviewActRequestParams {
   session_id: string
+  ledger_id?: string | null
+  expires_at?: number | null
   action: string
   ref?: string | null
   selector?: string | null
@@ -5603,12 +5628,16 @@ export interface PreviewActRequestParams {
 /** ``tools/app_action_tool.py`` payload: one stable action id plus its args object. */
 export interface AppActionRequestParams {
   session_id: string
+  ledger_id?: string | null
+  expires_at?: number | null
   action: string
   args?: Record<string, unknown> | null
 }
 /** ``tools/tour_tool.py`` field set. */
 export interface TourRequestParams {
   session_id: string
+  ledger_id?: string | null
+  expires_at?: number | null
   action: string
   surface?: string | null
   selector?: string | null
@@ -5631,6 +5660,8 @@ export type TourPreset = 'quick' | 'full'
 /** ``tools/set_theme_tool.py`` values; accent is a swatch id, ``theme`` or ``#rrggbb``. */
 export interface ThemeApplyRequestParams {
   session_id: string
+  ledger_id?: string | null
+  expires_at?: number | null
   accent?: string | null
   mode?: ThemeMode | null
   layout?: string | null
@@ -5638,6 +5669,8 @@ export interface ThemeApplyRequestParams {
 export type ThemeMode = 'light' | 'dark' | 'system'
 export interface ThemePickRequestParams {
   session_id: string
+  ledger_id?: string | null
+  expires_at?: number | null
   picker: ThemePicker
 }
 export type ThemePicker = 'accent' | 'layout'
@@ -5655,6 +5688,8 @@ export interface ThemeValues {
 }
 export interface DisplayInstallSudoParams {
   session_id: string
+  ledger_id?: string | null
+  expires_at?: number | null
   profile_key: string
 }
 /** ``methods_connectors._connection_update``: one target transition (``target``/``from``/``to``/ ``actor``) or the settlement (none of those), with the full snapshot. */
@@ -5677,6 +5712,7 @@ export interface ConnectionUpdatePayload {
 export type ConnectionActor = 'user' | 'backend_watcher' | 'clock'
 export interface RequestCancelPayload {
   id: string
+  ledger_id?: string | null
   method: string
   reason: string
 }
@@ -6170,6 +6206,7 @@ export type ChangeSignalPayload = Record<string, unknown>
 /** Emitted when a request was answered (by any client, or on another surface), to the clients attached to the session, answerer included (the id lets a client dedupe). ``choice`` is the approval decision, ``answers`` the clarify answers (clipped); both are null for sudo and secret. */
 export interface RequestResolvedPayload {
   id: string
+  ledger_id?: string | null
   method: string
   kind: HumanRequestKind
   session_id: string

@@ -21,6 +21,8 @@ class ServerRequestParams(Params):
     """Every request frame's params start with the session the question belongs to."""
 
     session_id: str
+    ledger_id: str | None = None
+    expires_at: float | None = None
 
 
 class ValueResult(Result):
@@ -382,6 +384,7 @@ class RequestCancelReason(WireEnum):
 
 class RequestCancelPayload(Payload):
     id: str
+    ledger_id: str | None = None
     method: str
     reason: str  # a RequestCancelReason value; callers in tools/approval may pass their own wording
 
