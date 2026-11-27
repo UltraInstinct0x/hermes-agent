@@ -19,6 +19,7 @@ import uuid
 from tools.interrupt import get_interrupt_reason, is_interrupted
 from tools import approval_context as _ctx
 from tools.approval_human_wait import activity_heartbeat, human_wait_window
+from tools.approval_metadata import classify_approval
 
 logger = logging.getLogger("tools.approval")
 
@@ -192,6 +193,7 @@ def _await_gateway_decision(session_key: str, notify_cb, approval_data: dict, *,
     owner = current(session_key)
     keys = list(approval_data.get("pattern_keys") or [])
     entry = _ApprovalEntry(approval_data)
+    entry.data["approval_kind"] = classify_approval(approval_data)
     if identity is not None:
         # Two commands that render alike after redaction must not share one session/always answer.
         entry.identity = _identity_digest(identity)

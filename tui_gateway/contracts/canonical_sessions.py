@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import RootModel
 
 from .base import JsonValue, Params, Result
-from .common import CanonicalClientIdentity, ProfileParams, TranscriptMessage
+from .common import ApprovalPromptKind, CanonicalClientIdentity, ProfileParams, TranscriptMessage
 from .connectors_operation import ConnectionRequestPayload
 from .sessions import OpenRequestEntry, TodoState
 from .canonical import (AdmissionStatus, CanonicalClientLabel, CanonicalSessionRef, PromptResponseResult,
@@ -105,6 +105,7 @@ class CanonicalPendingPrompt(Result):
     choices: list[str]
     command: str | None = None
     description: str | None = None
+    approval_kind: ApprovalPromptKind | None = None
     edit: dict[str, JsonValue] | None = None
     question: str | None = None
     multi_select: bool | None = None

@@ -873,6 +873,7 @@ class _GateSpec:
     cli_timeout: str          # {breaker}
     cli_denied: str           # {description}{breaker}
     smart_log: str            # {command}{description}{session_key}
+    approval_kind: str = "consent"
 
 
 # The only answers that count as consent. The gate used to be a deny-list — it refused "deny",
@@ -928,6 +929,7 @@ _STOP_ACTION = (
 
 _COMMAND_GATE = _GateSpec(
     noun="command", transport=True, user_approved=True, redact_cli=False, pending_keys=True,
+    approval_kind="command",
     notify_failed="BLOCKED: Failed to send approval request to user. Do NOT retry.",
     gateway_refused="BLOCKED: Command {reason}.{reason_addendum}" + _STOP_COMMAND
                     + "{timeout_addendum}{breaker}",
@@ -1025,6 +1027,7 @@ def _human_decision(spec: _GateSpec, *, command: str, description: str,
     (#141346). The human answer then covers this one command; session/always are not offered.
     """
     from agent.redact import redact_approval_display
+    from tools.approval_metadata import classify_approval
 
     smart_denied = False
     manual_only = not SMART_MANUAL_ONLY_DESCRIPTIONS.isdisjoint(pattern_keys)
@@ -1096,13 +1099,16 @@ def _human_decision(spec: _GateSpec, *, command: str, description: str,
             # Smart DENY overrides are one-operation decisions, so the UI must not offer a
             # permanent or session scope.
             data = {
-                "command": display_command, "pattern_key": pattern_key,
-                "pattern_keys": pattern_keys, "description": display_description,
+                "command": command, "pattern_key": pattern_key,
+                "pattern_keys": pattern_keys, "description": description,
+                "approval_kind": spec.approval_kind,
                 "allow_permanent": not one_shot,
                 "allow_session": not one_shot,
             }
             if smart_denied:
                 data["smart_denied"] = True
+            display = {"command": display_command, "description": display_description}
+            data.update(display, approval_kind=classify_approval(data, display))
             decision = _await_gateway_decision(session_key, notify_cb, data, surface="gateway", identity=command)
             if decision.get("notify_failed"):
                 return _denied(spec.notify_failed, pattern_key=pattern_key,

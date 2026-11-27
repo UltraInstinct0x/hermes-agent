@@ -1672,7 +1672,7 @@ Fires in the gateway once when a session's owner opens a prompt a person answers
 
 | `kind` | Prompt | Answered with `prompt_id` through |
 |--------|--------|-----------------------------------|
-| `"approval"` | Dangerous-command approval (`approval.request` event) | `approval.respond` |
+| `"approval"` | Command approval or other consent (`approval.request` event) | `approval.respond` |
 | `"clarify"` | A clarify question card (`clarify.request` event) | `clarify.respond` |
 | `"sudo"`, `"secret"`, `"vault.unlock_prompt"`, `"vault.code"`, `"vault.save_login"` | Masked sudo password, skill secret, password-manager unlock, one-time code, save-login prompts (server-to-client request frames) | A response frame with that `srq-` id |
 | `"clarify"` (request frame) | The classic CLI's batch clarify panel, or a plugin command's choice | A response frame or `clarify.lock` with that `srq-` id |
@@ -1693,6 +1693,16 @@ def my_callback(session_id: str, kind: str, prompt_id: str,
 | `prompt_id` | `str` | The id that answers the prompt; the matching `on_session_prompt_settled` carries the same value |
 | `execution_generation` | `int \| None` | The turn's generation for `approval` / `clarify` events, `None` for request frames |
 | `params` | `dict` | A deep copy of the prompt as the viewers received it (event payload or frame `params`). Every string is redacted with the secret redactor, even when `security.redact_secrets` is off |
+
+For approvals, `params["approval_kind"]` distinguishes a plain terminal `command`, a
+guardian denial requiring human review (`smart_denied`), a command with other
+one-operation review restrictions (`flagged`), a command whose display was changed by
+redaction or sanitization (`redacted`), and other `consent` (such as memory writes or
+payment consent). The field also accompanies the client approval payload. Notification
+clients should offer Approve/Reject only for `command`, and only when they display
+the whole command and can answer that exact prompt. Treat missing or unrecognized
+values as requiring in-app review. This metadata does not change who can answer or
+which answers the gateway accepts.
 
 What the person types is **never** passed. **Return value:** ignored; a raising callback is logged at debug and the prompt is unaffected. Calls run in order on one background worker, never on the agent thread or the event loop and never under a session lock, in the scope of the profile that owns the session (on a multi-profile gateway, only that profile's plugins are called). A slow callback only delays later calls of these two hooks.
 
