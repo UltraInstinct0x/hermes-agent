@@ -36,7 +36,6 @@ class _ApprovalEntry:
         self.identity = _identity_digest(data.get("command", ""))
         self.event = threading.Event()
         self.data = dict(data)
-        self.data["approval_kind"] = classify_approval(data)
         self.data.setdefault("request_id", uuid.uuid4().hex)
         # Born Deny-only: a card tap may only deny until a renderer proves its card shows the whole
         # command (#62359), so no tap can approve an entry in the window before its card is drawn.
@@ -194,6 +193,7 @@ def _await_gateway_decision(session_key: str, notify_cb, approval_data: dict, *,
     owner = current(session_key)
     keys = list(approval_data.get("pattern_keys") or [])
     entry = _ApprovalEntry(approval_data)
+    entry.data["approval_kind"] = classify_approval(approval_data)
     if identity is not None:
         # Two commands that render alike after redaction must not share one session/always answer.
         entry.identity = _identity_digest(identity)
