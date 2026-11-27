@@ -8,6 +8,7 @@ from copy import deepcopy
 from gateway.session_prompt_hooks import PromptTable
 from persistence.core.errors import AuthorityRefusal
 from tools.approval import list_gateway_approvals, resolve_gateway_approval
+from tools.approval_metadata import client_approval_fields
 
 
 class PendingControls:
@@ -17,7 +18,6 @@ class PendingControls:
         self.remote_responders = {}
 
     def register(self, session_id, route, generation, data, *, timeout_s=None):
-        from gateway.run import _redact_approval_command
         with self.events.lock:
             prompt_id = data['request_id']
             choices = ['once', 'deny']
@@ -27,8 +27,7 @@ class PendingControls:
                 choices.append('always')
             prompt = {'kind': 'approval', 'prompt_id': prompt_id,
                       'execution_generation': generation,
-                      'command': _redact_approval_command(data.get('command', '')),
-                      'description': _redact_approval_command(data.get('description', '')),
+                      **client_approval_fields({'command': '', 'description': '', **data}),
                       'choices': choices}
             if 'edit' in data:
                 prompt['edit'] = deepcopy(data['edit'])

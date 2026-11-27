@@ -154,6 +154,55 @@ def test_approval_fires_with_the_id_that_answers_it(owner, plugin):
     assert [hook for hook, _ in plugin.of(opened["prompt_id"])] == [OPENED, SETTLED]
 
 
+@pytest.mark.parametrize(("command", "verdict", "redact", "expected"), [
+    ("rm -rf build", None, True, "command"),
+    ("rm -rf build", "deny", True, "smart_denied"),
+    (f"rm -rf build; printf %s {TOKEN}", None, True, "redacted"),
+    (f"rm -rf build; printf %s {TOKEN}", None, False, "redacted"),
+    (None, None, True, "consent"),
+])
+def test_approval_kind_reaches_viewers_and_prompt_observers(owner, plugin, monkeypatch, command, verdict, redact, expected):
+    from agent import redact as redactor
+    from gateway.platforms.api_server import _approval_request_event
+    from tools import approval_context
+    from tools.approval_prompt import request_elicitation_consent
+    from tui_gateway.server import _approval_request_payload
+
+    monkeypatch.setenv("HERMES_GATEWAY_SESSION", "1")
+    monkeypatch.setattr(redactor, "_redact_enabled", lambda: redact)
+    monkeypatch.setattr(approval_context, "_get_approval_config",
+                        lambda: {"mode": "smart" if verdict else "manual", "timeout": 5})
+    if verdict:
+        monkeypatch.setattr(approval, "_smart_verdict", lambda *_args: verdict)
+
+    def notify(data):
+        owner.authority.register_approval("s", owner.generation, "route", data)
+        [prompt] = owner.live.controls.snapshot("s", owner.generation)
+        reply = owner.live.controls.respond("s", owner.generation, prompt["prompt_id"], {"choice": "deny"})
+        observed.append((prompt, reply, _approval_request_event("run", data), _approval_request_payload(data)))
+
+    observed = []
+    approval.register_gateway_notify("route", notify)
+    token = approval_context.set_current_session_key("route")
+    try:
+        if command is None:
+            assert request_elicitation_consent("Allow this payment?", "Consent needed") == "decline"
+        else:
+            assert approval.check_all_command_guards(command, "local")["outcome"] == "denied"
+    finally:
+        approval_context.reset_current_session_key(token)
+        approval.unregister_gateway_notify("route")
+
+    [(prompt, reply, api_event, tui_request)] = observed
+    assert reply["status"] == "resolved"
+    [opened] = plugin.wait(OPENED, prompt_id=prompt["prompt_id"])
+    for payload in (prompt, opened["params"], api_event, tui_request):
+        assert payload["approval_kind"] == expected
+        if expected == "command":
+            assert payload["command"] == command
+        assert TOKEN not in payload["command"]
+
+
 def test_clarify_fires_with_the_id_that_answers_it(owner, plugin):
     entry = _clarify(owner)
     [opened] = plugin.wait(OPENED)

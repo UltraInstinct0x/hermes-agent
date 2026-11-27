@@ -14,6 +14,7 @@ from pydantic import Field, model_validator
 from tools.tour_presets import TourPreset
 
 from .base import JsonValue, Params, Payload, Result, WireEnum
+from .common import ApprovalPromptKind
 from .registry import event, server_request
 
 
@@ -202,6 +203,7 @@ class ApprovalRequestParams(ServerRequestParams):
     allow_permanent: bool | None = None
     allow_session: bool | None = None
     smart_denied: bool | None = None
+    approval_kind: ApprovalPromptKind | None = None
     tool_name: str | None = None
     session_id_hint: str | None = Field(default=None, alias="gateway_session_id")
     kind: ApprovalKind | None = None

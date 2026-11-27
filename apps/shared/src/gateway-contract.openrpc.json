@@ -5483,6 +5483,17 @@
         "title": "ApprovalPendingResult",
         "type": "object"
       },
+      "ApprovalPromptKind": {
+        "enum": [
+          "command",
+          "smart_denied",
+          "flagged",
+          "redacted",
+          "consent"
+        ],
+        "title": "ApprovalPromptKind",
+        "type": "string"
+      },
       "ApprovalReceivedParams": {
         "additionalProperties": false,
         "properties": {
@@ -5592,6 +5603,17 @@
             ],
             "default": null,
             "title": "Smart Denied"
+          },
+          "approval_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApprovalPromptKind"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "tool_name": {
             "anyOf": [
@@ -9813,6 +9835,17 @@
             ],
             "default": null,
             "title": "Description"
+          },
+          "approval_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApprovalPromptKind"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "edit": {
             "anyOf": [
@@ -27013,6 +27046,17 @@
             ],
             "default": null,
             "title": "Smart Denied"
+          },
+          "approval_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApprovalPromptKind"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "choices": {
             "anyOf": [

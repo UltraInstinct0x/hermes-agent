@@ -91,9 +91,9 @@ def _approval_request_event(run_id: str, approval_data: Optional[dict[str, Any]]
     chat completions): the flagged command redacted before egress (#48456), the ``_run_event``
     envelope, and the ``choices`` the client may send back to ``POST /v1/runs/{id}/approval``."""
     from gateway.platforms.api_server_runs import _run_event
-    from gateway.run import _redact_approval_command
+    from tools.approval_metadata import client_approval_fields
     event = dict(approval_data or {})  # consent prompts (MCP, vault) carry server/model text in the description
-    event.update({k: _redact_approval_command(event[k]) for k in ("command", "description") if k in event})
+    event.update(client_approval_fields(event))
     event.update(_run_event(run_id, "approval.request", **fields, choices=_approval_event_choices(
         smart_denied=bool(event.get("smart_denied")),
         allow_session=event.get("allow_session") is not False,

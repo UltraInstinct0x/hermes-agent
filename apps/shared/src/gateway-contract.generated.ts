@@ -3111,10 +3111,12 @@ export interface PendingApproval {
   allow_permanent?: boolean | null
   allow_session?: boolean | null
   smart_denied?: boolean | null
+  approval_kind?: ApprovalPromptKind | null
   choices?: string[] | null
   tool_name?: string | null
   [key: string]: unknown
 }
+export type ApprovalPromptKind = 'command' | 'smart_denied' | 'flagged' | 'redacted' | 'consent'
 export interface ApprovalReceivedParams {
   session_id: string
   profile?: string | null
@@ -5316,6 +5318,7 @@ export interface CanonicalPendingPrompt {
   choices: string[]
   command?: string | null
   description?: string | null
+  approval_kind?: ApprovalPromptKind | null
   edit?: Record<string, unknown> | null
   question?: string | null
   multi_select?: boolean | null
@@ -5772,6 +5775,7 @@ export interface ApprovalRequestParams {
   allow_permanent?: boolean | null
   allow_session?: boolean | null
   smart_denied?: boolean | null
+  approval_kind?: ApprovalPromptKind | null
   tool_name?: string | null
   gateway_session_id?: string | null
   kind?: ApprovalKind | null

@@ -19,6 +19,7 @@ import uuid
 from tools.interrupt import get_interrupt_reason, is_interrupted
 from tools import approval_context as _ctx
 from tools.approval_human_wait import activity_heartbeat, human_wait_window
+from tools.approval_metadata import classify_approval
 
 logger = logging.getLogger("tools.approval")
 
@@ -35,6 +36,7 @@ class _ApprovalEntry:
         self.identity = _identity_digest(data.get("command", ""))
         self.event = threading.Event()
         self.data = dict(data)
+        self.data["approval_kind"] = classify_approval(data)
         self.data.setdefault("request_id", uuid.uuid4().hex)
         # Born Deny-only: a card tap may only deny until a renderer proves its card shows the whole
         # command (#62359), so no tap can approve an entry in the window before its card is drawn.

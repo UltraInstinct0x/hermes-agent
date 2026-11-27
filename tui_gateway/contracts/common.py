@@ -205,6 +205,14 @@ TERMINAL_SUBAGENT_STATUSES = frozenset({
 })
 
 
+class ApprovalPromptKind(WireEnum):
+    command = "command"
+    smart_denied = "smart_denied"
+    flagged = "flagged"
+    redacted = "redacted"
+    consent = "consent"
+
+
 class PendingApproval(OpenModel):
     """One unresolved ``tools/approval.py`` gateway queue entry as ``server._approval_request_payload``
     renders it (command redacted; ``choices`` precomputed). The key set is owned by the approval tool."""
@@ -217,6 +225,7 @@ class PendingApproval(OpenModel):
     allow_permanent: bool | None = None
     allow_session: bool | None = None
     smart_denied: bool | None = None
+    approval_kind: ApprovalPromptKind | None = None
     choices: list[str] | None = None
     tool_name: str | None = None
 

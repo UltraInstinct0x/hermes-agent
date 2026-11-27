@@ -152,7 +152,11 @@ def _dispatch(hook_name, authority, payload) -> None:
             scope = owner_scope(authority)
         with scope:
             if "params" in payload:  # in the owner's scope: its registered vault values are scrubbed too
-                payload = {**payload, "params": _redacted(payload["params"])}
+                params = _redacted(payload["params"])
+                if payload["kind"] == "approval":
+                    from tools.approval_metadata import classify_approval
+                    params["approval_kind"] = classify_approval(payload["params"], params)
+                payload = {**payload, "params": params}
             from hermes_cli.lifecycle import invoke_hook
             invoke_hook(hook_name, **payload)
     except (Exception, ConfigBackendUnavailable):  # health: allow BLE001 -- observers never break a prompt
